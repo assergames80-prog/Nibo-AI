@@ -93,3 +93,11 @@ test('repairs an unknown mic sensitivity', () => {
   fs.writeFileSync(file, JSON.stringify({ micSensitivity: 'deafening' }));
   assert.equal(new Store(file, fakeCipher).get('micSensitivity'), 'normal');
 });
+
+test('keeps a short, clean list of recent apps', () => {
+  const file = tmpFile();
+  fs.writeFileSync(file, JSON.stringify({ recentApps: ['Spotify', 42, '', 'Chrome', 'a', 'b', 'c', 'd', 'e'] }));
+  assert.deepEqual(new Store(file, fakeCipher).get('recentApps'), ['Spotify', 'Chrome', 'a', 'b', 'c', 'd']);
+  fs.writeFileSync(file, JSON.stringify({ recentApps: 'Spotify' }));
+  assert.deepEqual(new Store(file, fakeCipher).get('recentApps'), []);
+});

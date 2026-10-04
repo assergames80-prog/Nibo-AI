@@ -2,6 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 const {
   app,
   BrowserWindow,
@@ -24,6 +25,7 @@ const pet = require('./pet');
 const offline = require('./offline');
 const organizer = require('./organizer');
 const web = require('./websearch');
+const apps = require('./apps');
 const { WindowsVoice } = require('./tts');
 
 const WIN_W = 360;
@@ -57,6 +59,7 @@ let dragTimer = null;
 let hopping = false;
 const inflight = new Map();
 const windowsVoice = new WindowsVoice();
+const appCatalog = new apps.AppCatalog();
 
 // ---------- helpers ----------
 
@@ -133,6 +136,7 @@ function snapshot() {
       firstRun: Boolean(store.get('firstRun')),
     },
     canUndoOrganize,
+    recentApps: store.get('recentApps') || [],
     platform: process.platform,
     clickThrough: CLICK_THROUGH,
   };
@@ -528,6 +532,133 @@ function isWebUrl(url) {
   }
 }
 
+// ---------- opening apps ----------
+
+const FOLDERS = { desktop: 'Desktop', downloads: 'Downloads', documents: 'Documents', pictures: 'Pictures', music: 'Music', videos: 'Videos' };
+const NIBO_SETTINGS = { kind: 'nibo', name: "Nibo's settings", aliases: ['your settings', 'nibo settings', 'nibos settings'] };
+const KIND_ICON = { folder: '📂', site: '🌐', nibo: '⚙️' };
+
+function folderEntries() {
+  return Object.entries(FOLDERS).flatMap(([key, name]) => {
+    try {
+      return [{ kind: 'folder', name, path: app.getPath(key) }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+// Best first: installed apps and folders, then Windows' own apps, then websites.
+async function appTiers({ fresh = false } = {}) {
+  const installed = await appCatalog.installed({ fresh }).catch(() => []);
+  return [[...installed, ...folderEntries(), NIBO_SETTINGS], IS_WIN ? apps.BUILTINS : [], apps.WEBSITES];
+}
+
+async function findApp(phrase) {
+  const res = apps.resolve(phrase, await appTiers());
+  if (res.match || res.ambiguous || !appCatalog.mayBeStale()) return res;
+  return apps.resolve(phrase, await appTiers({ fresh: true })); // maybe it was just installed
+}
+
+const launchDeps = {
+  openPath: (target) => shell.openPath(target),
+  openExternal: (url) => shell.openExternal(url),
+  spawnDetached: (file, args) => {
+    const child = spawn(file, args, { detached: true, stdio: 'ignore' });
+    child.on('error', (err) => console.error(`[nibo] could not start ${file}:`, err.message));
+    child.unref();
+  },
+  systemRoot: process.env.SystemRoot || process.env.windir || 'C:\\Windows',
+};
+
+function rememberApp(name) {
+  const recent = (store.get('recentApps') || []).filter((n) => n !== name);
+  store.set({ recentApps: [name, ...recent].slice(0, 6) });
+  broadcastState();
+}
+
+// Returns null when it worked, or what went wrong.
+async function openEntry(entry) {
+  if (entry.kind === 'nibo') {
+    openSettings();
+    return null;
+  }
+  const error = await apps.launch(entry, launchDeps);
+  if (error) console.error(`[nibo] could not open ${entry.name}:`, error);
+  else if (entry.kind !== 'folder') rememberApp(entry.name);
+  return error;
+}
+
+function openedLine(entry) {
+  if (entry.kind === 'folder') return `Opening your ${entry.name} folder! 📂`;
+  if (entry.kind === 'site') return `Opening ${entry.name} in your browser! 🌐`;
+  if (entry.kind === 'nibo') return 'Here are my settings! ⚙️';
+  return offline.pick([`Opening ${entry.name}! 🚀`, `${entry.name}, coming right up! 🐰`, `Here comes ${entry.name}! ✨`]);
+}
+
+function toolLine(entry) {
+  if (entry.kind === 'folder') return `Opened the ${entry.name} folder.`;
+  if (entry.kind === 'site') return `Opened ${entry.name} in the web browser.`;
+  return `Opened ${entry.name}.`;
+}
+
+const listOf = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
+/**
+ * Opens what the user named ("spotify", "my downloads", "chrome and discord").
+ * Returns { found, text, toolText, opened?, actions? }: `text` is for the bubble,
+ * `toolText` for the AI, and `found` says whether the name meant anything.
+ */
+async function openApps(phrase) {
+  const res = await findApp(phrase);
+  let entries = res.match ? [res.match] : [];
+  if (!entries.length && !res.ambiguous) {
+    const parts = apps.splitNames(phrase);
+    const each = [];
+    for (const part of parts) each.push(await findApp(part));
+    if (each.length && each.every((r) => r.match)) entries = each.map((r) => r.match);
+  }
+
+  if (entries.length) {
+    const opened = [];
+    const failed = [];
+    for (const entry of entries) ((await openEntry(entry)) ? failed : opened).push(entry);
+    let text = opened.length === 1 ? openedLine(opened[0]) : opened.length ? `Opening ${listOf(opened.map((e) => e.name))}! 🚀` : '';
+    if (failed.length) text += `${text ? ' ' : ''}Oops, ${listOf(failed.map((e) => e.name))} didn't want to open. 😿`;
+    const toolText = [...opened.map(toolLine), ...failed.map((e) => `Opening ${e.name} failed.`)].join(' ');
+    return { found: true, text, toolText, opened: opened.map((e) => e.name) };
+  }
+
+  const said = String(phrase).trim();
+  if (res.choices.length) {
+    const names = res.choices.map((c) => c.name);
+    return {
+      found: Boolean(res.ambiguous),
+      text: res.ambiguous
+        ? 'Ooh, I found a few! Which one should I open? 🤔'
+        : `Hmm, I couldn't find “${said}”. Did you mean one of these? 🤔`,
+      toolText: res.ambiguous
+        ? `Nothing was opened: several things match "${said}": ${names.join(', ')}. Ask the user which one (buttons for them are shown).`
+        : `Nothing was opened: nothing called "${said}" was found. Similar names: ${names.join(', ')} (buttons for them are shown).`,
+      actions: res.choices.map((c) => ({ label: `${KIND_ICON[c.kind] || '🚀'} ${c.name}`, action: 'open-app', arg: c.name })),
+    };
+  }
+  return {
+    found: false,
+    text: `I sniffed around everywhere, but I couldn't find an app called “${said}”. 🥺`,
+    toolText: `Nothing was opened: no app, folder or website called "${said}" was found on this computer.`,
+  };
+}
+
+// The open_app tool for the AI. Choices it finds become buttons under the answer.
+function appTool(actions) {
+  return async (name) => {
+    const res = await openApps(name);
+    for (const a of res.actions || []) if (!actions.some((b) => b.arg === a.arg)) actions.push(a);
+    return { text: res.toolText, opened: res.opened };
+  };
+}
+
 // ---------- IPC ----------
 
 function registerIpc() {
@@ -566,6 +697,14 @@ function registerIpc() {
     if (!query) {
       const organizeTarget = offline.detectOrganize(text);
       if (organizeTarget) return { ok: true, organize: organizeTarget };
+      // "open spotify": quick, no AI needed when the name means something.
+      const request = offline.detectOpenApp(text);
+      if (request) {
+        const res = await openApps(request.name);
+        if (res.found || (request.sure && !brain.hasKey())) {
+          return { ok: true, text: res.text, opened: res.opened, actions: res.actions };
+        }
+      }
       if (!brain.hasKey()) {
         const local = offline.answer(text, { mood: pet.moodOf(petState) });
         return { ok: true, offline: true, text: local.text, actions: local.actions };
@@ -579,6 +718,7 @@ function registerIpc() {
     };
     const onDelta = (delta) => live('nibo:delta', { delta });
     const onEvent = (ev) => ev.type === 'searching' && live('nibo:search-status', { query: ev.query });
+    const appActions = [];
     try {
       const result = query
         ? await answerFromWeb(text, query, { signal: controller.signal, onDelta, onEvent })
@@ -588,10 +728,12 @@ function registerIpc() {
             onDelta,
             onEvent,
             search: webSearchTool(),
+            openApp: appTool(appActions),
           });
       if (result.ok) {
         petState = pet.cheer(petState, 1);
         savePet();
+        if (appActions.length) result.actions = appActions;
       } else if (result.kind === 'auth') {
         result.actions = [{ label: '⚙️ Open Settings', action: 'settings' }];
       } else if (result.kind === 'network') {
@@ -601,6 +743,14 @@ function registerIpc() {
     } finally {
       inflight.delete(id);
     }
+  });
+
+  ipcMain.handle('nibo:open-app', async (e, name) => {
+    if (!fromBunny(e)) return { ok: false };
+    const phrase = String(name ?? '').trim().slice(0, 100);
+    if (!phrase) return { ok: false };
+    const res = await openApps(phrase);
+    return { ok: true, text: res.text, opened: res.opened, actions: res.actions };
   });
 
   ipcMain.handle('nibo:transcribe', async (e, audio) => {
@@ -824,6 +974,8 @@ function init() {
 
   // Warm up the Windows voice so Nibo's first sentence isn't slow.
   if (windowsVoice.available()) windowsVoice.start().catch(() => broadcastState());
+  // Get the list of apps ready (after the voice helper) so "open …" is quick.
+  setTimeout(() => appCatalog.warm(), 5000).unref();
 
   // Talk to Nibo from anywhere.
   try {

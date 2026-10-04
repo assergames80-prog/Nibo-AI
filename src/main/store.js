@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS = {
   autoSearch: true,
   bargeIn: true,
   micSensitivity: 'normal',
+  recentApps: [],
   firstRun: true,
   position: null,
   pet: null,
@@ -49,6 +50,8 @@ class Store {
     }
     if (!Object.hasOwn(SEARCH_ENGINES, this.data.searchEngine)) this.data.searchEngine = 'google';
     if (!MIC_SENSITIVITIES.includes(this.data.micSensitivity)) this.data.micSensitivity = 'normal';
+    const recent = Array.isArray(this.data.recentApps) ? this.data.recentApps : [];
+    this.data.recentApps = recent.filter((n) => typeof n === 'string' && n.trim() && n.length <= 200).slice(0, 6);
   }
 
   save() {

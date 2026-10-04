@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('nibo', {
   tts: (text) => ipcRenderer.invoke('nibo:tts', String(text)),
   cancel: (id) => ipcRenderer.send('nibo:cancel', id),
   preset: (name, arg) => ipcRenderer.invoke('nibo:preset', { name, arg }),
+  openApp: (name) => ipcRenderer.invoke('nibo:open-app', String(name)),
   organize: (target) => ipcRenderer.invoke('nibo:organize', String(target)),
   organizeUndo: () => ipcRenderer.invoke('nibo:organize-undo'),
   openOrganized: () => ipcRenderer.send('nibo:open-organized'),

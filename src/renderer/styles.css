@@ -831,6 +831,9 @@ body:not(.show-ui) .ui * {
 body.search-mode #prompt {
   background: #eef9ff;
 }
+body.app-mode #prompt {
+  background: #f1fff3;
+}
 
 #prompt button {
   height: 32px;

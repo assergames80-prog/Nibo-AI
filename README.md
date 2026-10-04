@@ -1,7 +1,8 @@
 # 🐰 Nibo AI
 
 A cute, hand-drawn AI bunny who floats on your desktop, answers your questions at
-[Groq](https://groq.com) speed, searches the web, chats with you out loud, tells silly jokes and *really* likes carrots.
+[Groq](https://groq.com) speed, searches the web, opens your apps, chats with you out loud, tells silly jokes and *really*
+likes carrots.
 Inspired by classic desktop buddies like BonziBuddy.
 
 ![Nibo floating on a desktop: greeting, preset menu, answering a question, answering from a web search with source links, and eating a carrot](docs/screenshot.png)
@@ -15,10 +16,13 @@ Inspired by classic desktop buddies like BonziBuddy.
 - **Ask him anything.** Hover over Nibo and a prompt bar pops up. Answers stream into a speech bubble via the Groq API.
 - **Searches the web for real.** With a [Tavily](https://tavily.com) key, Nibo looks things up by himself when a
   question needs fresh info (weather, news, prices…) and answers with clickable source links.
+- **Opens your apps.** Say or type *"open Spotify"* and off it goes. He also opens your folders (*"open my
+  downloads"*) and popular websites (*"open YouTube"*).
 - **Talk to him.** Click 🎤 (or press **Ctrl+Alt+Space** anywhere) and just speak. He answers out loud while the reply
   streams in, keeps listening hands-free, and you can **interrupt him by talking over him**.
 - **Silly presets.** Click **Preset ▾** or right-click Nibo:
   - 🗂️ Organize my files (for real, with your approval, see below)
+  - 🚀 Open an app…
   - 😂 Tell me a joke
   - 🔎 Search the web for…
   - 💡 Fun fact
@@ -87,6 +91,21 @@ it back out of what the mic hears, and he turns himself down the moment you star
 work best. With loud speakers right next to the mic, talk a little louder to interrupt him. If his own voice ever
 cuts him off, lower the volume or set the sensitivity to **Low**.
 
+## Open apps
+
+Say or type *"open Spotify"*, *"launch chrome"* or *"Nibo, can you start Steam?"*, or pick 🚀 **Open an app…** from
+his menu, which also shows the apps you opened last.
+
+- Nibo knows every app in your Start menu, Microsoft Store apps included. Short names and small typos work too:
+  *"chrome"*, *"vs code"*, *"spotfy"*.
+- He opens your **Desktop, Downloads, Documents, Pictures, Music and Videos** folders, and websites like
+  **YouTube, Gmail or Netflix** (or any address, like *"open bbc.co.uk"*) in your browser.
+- Open a few at once: *"open Spotify and Discord"*.
+- If several apps fit (*"open visual studio"*), he shows buttons so you can pick one.
+- With a Groq key you can ask in your own words, like *"put on some music"*.
+- To stay safe, he only opens apps from the Start menu, your folders and websites. He never runs commands or
+  programs you type in, and web search results can't make him open anything.
+
 ## Organize my files
 
 Right-click Nibo → 🗂️ **Organize my files** (or just tell him *"organize my desktop"* or *"tidy up my downloads"*),
@@ -116,6 +135,7 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 | Click him | Giggles (and wakes up if he's napping) |
 | Drag him | Dangles while you carry him, then lands with a squish |
 | Right-click him / **Preset ▾** | Opens the silly menu |
+| Say "open Spotify" | Opens it (apps, folders like Downloads, websites like YouTube) |
 | Say "organize my desktop" | Plans a tidy-up and asks for your approval |
 | 🥕 button | Carrot time! |
 | Tray icon | Show / hide Nibo, feed him, settings, quit |
@@ -127,6 +147,7 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 - Web searches send just the search query to Tavily. Results are used only to answer you.
 - The microphone is only on while voice chat is on, as shown by the pink 🎤 and the 👂 badge. Only the bits where
   Nibo detects speech are sent to Groq for transcription. Audio is never saved.
+- **Opening apps** happens on your computer. Your list of apps is never sent anywhere.
 - **Organize my files** runs entirely on your computer: file names are never sent to Groq or anywhere else.
   Files only move after you approve the plan, and the last tidy-up is remembered (in `%APPDATA%\Nibo AI\`) so
   you can undo it.
@@ -162,6 +183,7 @@ src/main/       Electron main process
   main.js       window, tray, dragging, hopping, IPC
   brain.js      Groq chat (streaming, web_search tool, model fallback) + Whisper speech-to-text
   websearch.js  Tavily web search
+  apps.js       opening apps: the Start menu list, name matching, launching
   offline.js    the offline bunny brain, web search URLs, chat intents
   organizer.js  file tidying: plan, apply, undo
   pet.js        tummy & happiness

@@ -65,3 +65,19 @@ test('detects requests to organize files', () => {
   assert.equal(offline.detectOrganize('how do I organize my life?'), null);
   assert.equal(offline.detectOrganize('what is on my desktop?'), null);
 });
+
+test('detects requests to open an app', () => {
+  assert.deepEqual(offline.detectOpenApp('open spotify'), { name: 'spotify', sure: true });
+  assert.deepEqual(offline.detectOpenApp('Open Spotify.'), { name: 'Spotify', sure: true });
+  assert.deepEqual(offline.detectOpenApp('Nibo, can you launch chrome for me?'), { name: 'chrome', sure: true });
+  assert.deepEqual(offline.detectOpenApp('Hey Nibo open YouTube!'), { name: 'YouTube', sure: true });
+  assert.deepEqual(offline.detectOpenApp('please open up my downloads folder'), { name: 'my downloads folder', sure: true });
+  assert.deepEqual(offline.detectOpenApp('start notepad please'), { name: 'notepad', sure: false });
+  assert.deepEqual(offline.detectOpenApp('fire up minecraft'), { name: 'minecraft', sure: false });
+  assert.deepEqual(offline.detectOpenApp('open Spotify and Discord'), { name: 'Spotify and Discord', sure: true });
+  assert.equal(offline.detectOpenApp('start over'), null);
+  assert.equal(offline.detectOpenApp('run a test'), null);
+  assert.equal(offline.detectOpenApp('open a new tab'), null);
+  assert.equal(offline.detectOpenApp('what is open source?'), null);
+  assert.equal(offline.detectOpenApp('how do I open a jar?'), null);
+});

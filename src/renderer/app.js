@@ -36,7 +36,7 @@
   let reqSeq = 0;
   let currentReq = null;
   let gotDelta = false;
-  let searchMode = false;
+  let promptMode = null; // 'search' | 'app': what the prompt bar is asking for
   let feeding = false;
   let hovering = false;
   let ignoring = null;
@@ -688,7 +688,8 @@
       if (reqSpeaks) speak(res.text);
       else talkFor(clamp(res.text.length * 35, 600, 2600));
     }
-    if (res.searched) {
+    if (res.opened && res.opened.length) celebrateOpen();
+    else if (res.searched) {
       playPose('jump', 560);
       twitch();
     }
@@ -871,18 +872,24 @@
 
   // ---------- presets ----------
 
-  function enterSearchMode() {
-    searchMode = true;
-    document.body.classList.add('search-mode');
-    input.placeholder = 'Search the web for…';
+  const PROMPT_MODES = {
+    search: { placeholder: 'Search the web for…', line: 'What should I sniff out on the web? 🔎 Type it below!' },
+    app: { placeholder: 'Type an app name…', line: 'Which app should I open? 🚀 Type its name!' },
+  };
+
+  function enterPromptMode(mode, actions = []) {
+    exitPromptMode();
+    promptMode = mode;
+    document.body.classList.add(`${mode}-mode`);
+    input.placeholder = PROMPT_MODES[mode].placeholder;
     showUI();
     input.focus();
-    say('What should I sniff out on the web? 🔎 Type it below!', { sticky: true });
+    say(PROMPT_MODES[mode].line, { sticky: true, actions });
   }
 
-  function exitSearchMode() {
-    searchMode = false;
-    document.body.classList.remove('search-mode');
+  function exitPromptMode() {
+    if (promptMode) document.body.classList.remove(`${promptMode}-mode`);
+    promptMode = null;
     input.placeholder = 'Ask me anything…';
   }
 
@@ -898,8 +905,8 @@
 
   async function doSearch(query) {
     const q = String(query || '').trim();
-    if (!q) return enterSearchMode();
-    exitSearchMode();
+    if (!q) return enterPromptMode('search');
+    exitPromptMode();
     touch();
     if (state.settings.hasSearch) return ask(q, { search: true });
     return browserSearch(q);
@@ -949,6 +956,44 @@
     if (!res || (res.cancelled && !res.text)) return;
     say(res.text);
     if (res.ok) playPose('jump', 560);
+  }
+
+  // ---------- opening apps ----------
+
+  function chooseApp() {
+    touch();
+    if (face.sleeping) wake(false);
+    const recent = (state.recentApps || []).slice(0, 4);
+    enterPromptMode(
+      'app',
+      recent.map((name) => ({ label: `🚀 ${name}`, action: 'open-app', arg: name })),
+    );
+  }
+
+  function celebrateOpen() {
+    playPose('jump', 560);
+    express({ eyes: 'happy', mouth: 'smile' }, 1500);
+    sparkles(6);
+    twitch();
+  }
+
+  async function openApp(name) {
+    const n = String(name || '').trim();
+    if (!n) return chooseApp();
+    exitPromptMode();
+    touch();
+    if (face.sleeping) wake(false);
+    stopSpeaking();
+    bubble.thinking('');
+    let res;
+    try {
+      res = await nibo.openApp(n);
+    } catch {
+      res = null;
+    }
+    if (!res || !res.ok) return say("Oops, my paws slipped. Try again? 🐰");
+    say(res.text, { actions: res.actions });
+    if (res.opened && res.opened.length) celebrateOpen();
   }
 
   async function feed() {
@@ -1082,9 +1127,15 @@
         return ask('Cheer me up! Say something sweet and encouraging.');
       case 'search': {
         const typed = input.value.trim();
-        if (!typed) return enterSearchMode();
+        if (!typed) return enterPromptMode('search');
         input.value = '';
         return doSearch(typed);
+      }
+      case 'open-app': {
+        const typed = input.value.trim();
+        if (!typed) return chooseApp();
+        input.value = '';
+        return openApp(typed);
       }
       case 'feed':
         return feed();
@@ -1127,6 +1178,7 @@
     else if (action.action === 'open-organized') nibo.openOrganized();
     else if (action.action === 'open-url') nibo.openExternal(action.arg);
     else if (action.action === 'browser-search') browserSearch(action.arg);
+    else if (action.action === 'open-app') openApp(action.arg);
   });
 
   // ---------- hover, click-through, menu ----------
@@ -1157,7 +1209,7 @@
     clearTimeout(uiTimer);
     uiTimer = setTimeout(() => {
       const typing = document.activeElement === input && input.value.trim();
-      if (hovering || menuOpen() || typing || searchMode || dragging) return;
+      if (hovering || menuOpen() || typing || promptMode || dragging) return;
       document.body.classList.remove('show-ui');
       if (document.activeElement === input) input.blur();
     }, delay);
@@ -1253,8 +1305,8 @@
     closeMenu();
     if (dragging) endDrag();
     pressed = null;
-    if (searchMode && !input.value.trim()) {
-      exitSearchMode();
+    if (promptMode && !input.value.trim()) {
+      exitPromptMode();
       bubble.hide();
     }
     maybeHideUI(600);
@@ -1291,7 +1343,8 @@
     const text = input.value.trim();
     if (!text) return input.focus();
     input.value = '';
-    if (searchMode) doSearch(text);
+    if (promptMode === 'search') doSearch(text);
+    else if (promptMode === 'app') openApp(text);
     else ask(text);
   });
 
@@ -1302,8 +1355,8 @@
     if (e.key !== 'Escape') return;
     if (menuOpen()) return closeMenu();
     if (interrupt()) return;
-    if (searchMode) {
-      exitSearchMode();
+    if (promptMode) {
+      exitPromptMode();
       bubble.hide();
       return;
     }

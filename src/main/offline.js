@@ -296,6 +296,21 @@ function detectOrganize(text) {
   return 'ask';
 }
 
+// ---------- "open spotify" requests ----------
+
+const OPEN_REQUEST =
+  /^(?:(?:hey|hi|ok|okay)\s+)?(?:nibo\s*[,!]?\s*)?(?:(?:please|pls|can you|could you|would you|will you|can u)\s+)*(open(?:\s+up)?|launch|start(?:\s+up)?|run|fire\s+up|boot\s+up|load\s+up|pull\s+up|bring\s+up)\s+(.+)$/i;
+
+// "open spotify", "Nibo, can you launch chrome for me?" -> { name: 'spotify', sure: true }.
+// `sure` is false for verbs that often mean something else ("start over", "run a test").
+function detectOpenApp(text) {
+  const m = String(text).trim().replace(/[.!?]+$/, '').match(OPEN_REQUEST);
+  if (!m) return null;
+  const name = m[2].replace(/(?:\s*,?\s*(?:please|pls|for me|thanks|thank you))+$/i, '').trim();
+  if (!name || name.length > 60 || /^(?:a|an|some|another|new|over|again|it|this|that)\b/i.test(name)) return null;
+  return { name, sure: /^(?:open|launch)/i.test(m[1]) };
+}
+
 module.exports = {
   JOKES,
   FACTS,
@@ -312,5 +327,6 @@ module.exports = {
   searchUrl,
   detectSearch,
   detectOrganize,
+  detectOpenApp,
   answer,
 };
