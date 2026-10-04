@@ -33,14 +33,14 @@ Inspired by classic desktop buddies like BonziBuddy.
 
 ## Download for Windows
 
-1. Open the [**Actions** tab](https://github.com/assergames80-prog/Nibo-AI/actions/workflows/build.yml), click the
-   latest successful **Build Nibo AI** run, and download the **Nibo-AI-Windows** artifact.
-   (When a version tag like `v1.0.0` is pushed, the same files are attached to a
-   [Release](https://github.com/assergames80-prog/Nibo-AI/releases).)
-2. Unzip it. You get two `.exe` files:
+1. Go to the [**latest release**](https://github.com/assergames80-prog/Nibo-AI/releases/latest) and download one of
+   the two `.exe` files:
    - `Nibo-AI-Setup-x.y.z.exe`: installer with Start-menu and desktop shortcuts.
    - `Nibo-AI-Portable-x.y.z.exe`: a single file you just run, nothing to install.
-3. The executables aren't code-signed yet, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
+
+   Builds of every push are also on the [**Actions** tab](https://github.com/assergames80-prog/Nibo-AI/actions/workflows/build.yml)
+   as the **Nibo-AI-Windows** artifact.
+2. The executables aren't code-signed yet, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
 
 ## Give Nibo a brain (Groq API key)
 
@@ -87,7 +87,8 @@ npm run dist:portable   # just the portable exe
 ```
 
 `dist:win` is easiest on Windows. On Linux or macOS the portable exe builds fine, but the NSIS installer step needs Wine.
-GitHub Actions builds both on a Windows runner for every push.
+GitHub Actions builds both on a Windows runner for every push. To publish a release, push a `v*` tag, or run the
+**Build Nibo AI** workflow manually with a `release_tag` such as `v1.1.0`.
 
 Other helpers:
 
