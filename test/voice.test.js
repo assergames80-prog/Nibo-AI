@@ -126,3 +126,30 @@ test("spots echoes of Nibo's own words", () => {
   assert.equal(voice.isEcho('stop', 'stop it bunny'), false);
   assert.equal(voice.isEcho('anything at all', ''), false);
 });
+
+test("doesn't mistake a question that shares a few words for an echo", () => {
+  const said = "I'm all ears! Just talk to me. You can interrupt me anytime.";
+  assert.equal(voice.isEcho('Can you hear me?', said), false);
+  assert.equal(voice.isEcho('just talk to me you can', said), true);
+});
+
+test("doesn't learn the room from Nibo's own voice while warming up", () => {
+  const d = voice.createDetector({ sampleRate: RATE });
+  d.setNiboSpeaking(true);
+  feed(d, -30, 2000); // his greeting, right as the mic opens
+  d.setNiboSpeaking(false);
+  feed(d, -70, 1500);
+  assert.ok(d.floor < -60, `floor ${d.floor}`);
+  assert.deepEqual(feed(d, -35, 500), [{ type: 'start', bargeIn: false }]);
+});
+
+test('speech followed by a room that got louder (auto-gain) is still sent', () => {
+  const d = voice.createDetector({ sampleRate: RATE });
+  feed(d, -70, 1000);
+  const events = [...feed(d, -20, 1000), ...feed(d, -42, 2500)];
+  assert.deepEqual(
+    events.map((e) => e.type),
+    ['start', 'end'],
+  );
+  assert.ok(d.floor > -45, `floor ${d.floor}`);
+});

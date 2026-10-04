@@ -24,6 +24,7 @@ const pet = require('./pet');
 const offline = require('./offline');
 const organizer = require('./organizer');
 const web = require('./websearch');
+const { WindowsVoice } = require('./tts');
 
 const WIN_W = 360;
 const WIN_H = 620;
@@ -34,6 +35,11 @@ const CLICK_THROUGH = IS_WIN || IS_MAC;
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const VOICE_HOTKEY = 'CommandOrControl+Alt+Space';
+
+// Let the microphone's echo cancellation remove everything Nibo plays (his
+// voice), not just WebRTC call audio, so the user can talk over him.
+const enabledFeatures = app.commandLine.getSwitchValue('enable-features');
+app.commandLine.appendSwitch('enable-features', [enabledFeatures, 'ChromeWideEchoCancellation'].filter(Boolean).join(','));
 
 let win = null;
 let settingsWin = null;
@@ -50,6 +56,7 @@ let petState = null;
 let dragTimer = null;
 let hopping = false;
 const inflight = new Map();
+const windowsVoice = new WindowsVoice();
 
 // ---------- helpers ----------
 
@@ -122,6 +129,7 @@ function snapshot() {
       bargeIn: store.get('bargeIn') !== false,
       micSensitivity: store.get('micSensitivity'),
       hotkey: hotkeyReady ? 'Ctrl+Alt+Space' : null,
+      nativeVoice: windowsVoice.available(),
       firstRun: Boolean(store.get('firstRun')),
     },
     canUndoOrganize,
@@ -612,6 +620,19 @@ function registerIpc() {
     return result;
   });
 
+  // Render a sentence with the Windows voice; the renderer plays it.
+  ipcMain.handle('nibo:tts', async (e, text) => {
+    if (!fromBunny(e) || !windowsVoice.available()) return { ok: false };
+    try {
+      const { sampleRate, pcm } = await windowsVoice.synthesize(String(text || '').slice(0, 1000));
+      return { ok: true, sampleRate, pcm: new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength) };
+    } catch (err) {
+      console.error('[nibo] Windows voice failed:', err.message);
+      if (!windowsVoice.available()) broadcastState();
+      return { ok: false };
+    }
+  });
+
   ipcMain.handle('nibo:mic-access', async (e) => {
     if (!fromBunny(e)) return false;
     if (IS_MAC) return systemPreferences.askForMediaAccess('microphone');
@@ -796,6 +817,9 @@ function init() {
   createBunnyWindow();
   createTray();
 
+  // Warm up the Windows voice so Nibo's first sentence isn't slow.
+  if (windowsVoice.available()) windowsVoice.start().catch(() => broadcastState());
+
   // Talk to Nibo from anywhere.
   try {
     hotkeyReady = globalShortcut.register(VOICE_HOTKEY, () => {
@@ -842,6 +866,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => globalShortcut.unregisterAll());
   app.on('before-quit', () => {
+    windowsVoice.stop();
     for (const controller of inflight.values()) controller.abort();
     if (store) {
       savePet();

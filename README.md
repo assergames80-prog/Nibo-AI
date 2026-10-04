@@ -80,9 +80,12 @@ up while he listens, and a little 👂 badge shows he's still listening when the
 - Say *"stop listening"*, click 🎤 again, or press **Ctrl+Alt+Space** to end voice chat.
 - In Settings you can set the microphone sensitivity (handy in noisy rooms) and turn off talk-to-interrupt.
 
-Windows has to allow desktop apps to use the microphone: **Settings → Privacy & security → Microphone**. Nibo's
-voice comes from your system's text-to-speech voices. If his own voice from your speakers ever cuts him off,
-lower the volume, use headphones, or set the sensitivity to **Low**.
+Windows has to allow desktop apps to use the microphone: **Settings → Privacy & security → Microphone**.
+
+Nibo's voice comes from the Windows voices. He plays it himself, so the microphone's echo cancellation can take
+it back out of what the mic hears, and he turns himself down the moment you start talking over him. Headphones
+work best. With loud speakers right next to the mic, talk a little louder to interrupt him. If his own voice ever
+cuts him off, lower the volume or set the sensitivity to **Low**.
 
 ## Organize my files
 

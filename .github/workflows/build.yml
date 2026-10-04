@@ -41,6 +41,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Unit tests on Windows (includes the real Windows voice helper)
+        run: npm test
       - name: Build installer and portable exe
         run: npm run dist:win
         env:

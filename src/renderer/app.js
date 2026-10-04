@@ -400,7 +400,14 @@
 
   // Speech is queued one sentence at a time, so Nibo can start talking while
   // an answer is still streaming in, and stop instantly when interrupted.
-  const tts = { queue: 0, buffer: '', active: false, log: [] };
+  //
+  // On Windows each sentence is rendered by the Windows voice in the main
+  // process and played here, through Chromium, so the microphone's echo
+  // cancellation can remove Nibo's own voice and the user can talk over him.
+  // Elsewhere (or if that fails) the Web Speech API speaks instead.
+  const tts = { queue: 0, buffer: '', active: false, log: [], gen: 0, utterances: new Set() };
+  const player = { ctx: null, gain: null, source: null, chain: Promise.resolve(), duckTimer: 0 };
+  const SQUEAK = 1.22; // play the Windows voice a little faster and higher: bunny-sized
   const SENTENCE_END = /[.!?…]+["'”’)\]]*\s+|\n+/g;
 
   function pickVoice() {
@@ -422,6 +429,7 @@
       .trim();
   }
 
+  // "Speaking" lasts from the first sound until the queue runs dry.
   function setSpeaking(on) {
     if (tts.active === on) return;
     tts.active = on;
@@ -429,22 +437,114 @@
     renderFace();
   }
 
+  function sentenceDone(gen) {
+    if (gen !== tts.gen) return;
+    tts.queue = Math.max(0, tts.queue - 1);
+    if (!tts.queue) setSpeaking(false);
+  }
+
   function speakSentence(sentence) {
     const clean = cleanForSpeech(sentence);
-    if (!clean || !('speechSynthesis' in window)) return;
-    const u = new SpeechSynthesisUtterance(clean.slice(0, 400));
-    u.pitch = 1.8;
-    u.rate = 1.08;
-    const voice = pickVoice();
-    if (voice) u.voice = voice;
+    if (!clean) return;
+    const gen = tts.gen;
     tts.queue++;
     tts.log.push({ text: clean, at: Date.now() });
-    u.onstart = () => setSpeaking(true);
-    u.onend = u.onerror = () => {
-      tts.queue = Math.max(0, tts.queue - 1);
-      if (!tts.queue) setSpeaking(false);
-    };
-    window.speechSynthesis.speak(u);
+    if (state && state.settings.nativeVoice) {
+      const audio = nibo.tts(clean).catch(() => null); // start rendering right away
+      player.chain = player.chain
+        .then(async () => {
+          if (gen !== tts.gen) return;
+          const res = await audio;
+          if (gen !== tts.gen) return;
+          if (res && res.ok) await playPcm(res, gen);
+          else await speakWithBrowser(clean, gen);
+        })
+        .catch(() => {})
+        .finally(() => sentenceDone(gen));
+    } else {
+      speakWithBrowser(clean, gen).finally(() => sentenceDone(gen));
+    }
+  }
+
+  function ensurePlayer() {
+    if (!player.ctx) {
+      player.ctx = new AudioContext();
+      player.gain = player.ctx.createGain();
+      player.gain.connect(player.ctx.destination);
+    }
+    if (player.ctx.state === 'suspended') player.ctx.resume().catch(() => {});
+    return player.ctx;
+  }
+
+  // Play 16-bit mono PCM from the Windows voice. Resolves when it ends or is stopped.
+  function playPcm({ pcm, sampleRate }, gen) {
+    return new Promise((resolve) => {
+      const bytes = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm);
+      const frames = Math.floor(bytes.byteLength / 2);
+      if (gen !== tts.gen || !frames) return resolve();
+      const ctx = ensurePlayer();
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const buffer = ctx.createBuffer(1, frames, sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < frames; i++) data[i] = view.getInt16(i * 2, true) / 32768;
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = SQUEAK;
+      source.connect(player.gain);
+      source.onended = () => {
+        if (player.source === source) player.source = null;
+        resolve();
+      };
+      player.source = source;
+      player.gain.gain.cancelScheduledValues(ctx.currentTime);
+      player.gain.gain.setValueAtTime(1, ctx.currentTime);
+      source.start();
+      setSpeaking(true);
+    });
+  }
+
+  // Web Speech API fallback. Resolves when the sentence is done (or stopped).
+  function speakWithBrowser(text, gen) {
+    return new Promise((resolve) => {
+      if (gen !== tts.gen || !('speechSynthesis' in window)) return resolve();
+      const synth = window.speechSynthesis;
+      const u = new SpeechSynthesisUtterance(text.slice(0, 400));
+      u.pitch = 1.8;
+      u.rate = 1.08;
+      const voice = pickVoice();
+      if (voice) u.voice = voice;
+      // Chromium can skip the end event of an utterance it has garbage-collected,
+      // so keep a reference, and stop waiting once the engine has gone quiet.
+      tts.utterances.add(u);
+      let quietSince = 0;
+      const watchdog = setInterval(() => {
+        if (synth.speaking || synth.pending) quietSince = 0;
+        else if (!quietSince) quietSince = Date.now();
+        else if (Date.now() - quietSince > 1500) done();
+      }, 250);
+      function done() {
+        clearInterval(watchdog);
+        tts.utterances.delete(u);
+        resolve();
+      }
+      u.onstart = () => gen === tts.gen && setSpeaking(true);
+      u.onend = u.onerror = done;
+      synth.speak(u);
+    });
+  }
+
+  // Turn Nibo down the moment it sounds like the user is talking over him,
+  // so the microphone can tell them apart.
+  function duck() {
+    if (!player.source || !player.gain) return;
+    const g = player.gain.gain;
+    const now = player.ctx.currentTime;
+    g.cancelScheduledValues(now);
+    g.setTargetAtTime(0.25, now, 0.03);
+    clearTimeout(player.duckTimer);
+    player.duckTimer = setTimeout(() => {
+      if (player.gain) player.gain.gain.setTargetAtTime(1, player.ctx.currentTime, 0.15);
+    }, 600);
   }
 
   // Feed streamed text; complete sentences are spoken right away.
@@ -467,8 +567,18 @@
   }
 
   function stopSpeaking() {
+    tts.gen++;
     tts.buffer = '';
     tts.queue = 0;
+    player.chain = Promise.resolve();
+    if (player.source) {
+      try {
+        player.source.stop();
+      } catch {
+        // already stopped
+      }
+      player.source = null;
+    }
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     setSpeaking(false);
   }
@@ -663,10 +773,7 @@
     pose.classList.add('listening');
     micBtn.title = 'Stop listening (Ctrl+Alt+Space)';
     playPose('jump', 560);
-    say(
-      `I'm all ears! 👂 Just talk to me.${state.settings.bargeIn !== false ? ' You can interrupt me anytime.' : ''}`,
-      { duration: 4500 },
-    );
+    say("I'm listening! 👂", { duration: 3000 });
   }
 
   function stopListening(quiet = false) {
@@ -709,7 +816,7 @@
     ignoreUtterance = false;
   }
 
-  async function handleUtterance({ wav, speechMs }) {
+  async function handleUtterance({ wav, speechMs, bargeIn }) {
     unhear();
     if (ignoreUtterance) {
       ignoreUtterance = false;
@@ -733,7 +840,9 @@
       if (res && !res.aborted) say(res.error || "I couldn't hear that. 🎤", { actions: res.actions });
       return;
     }
-    if (window.NiboVoice.isPhantom(res.text, { speechMs }) || window.NiboVoice.isEcho(res.text, recentlySaid())) {
+    // Only speech that overlapped Nibo talking can be his own echo.
+    const echo = bargeIn && window.NiboVoice.isEcho(res.text, recentlySaid());
+    if (window.NiboVoice.isPhantom(res.text, { speechMs }) || echo) {
       bubble.hide();
       return;
     }
@@ -750,6 +859,7 @@
   }
 
   function showLevel(db, threshold) {
+    if (tts.active && db > threshold - 3) duck();
     lastLevel = clamp((db - threshold + 12) / 24, 0, 1);
     if (levelFrame) return;
     levelFrame = requestAnimationFrame(() => {

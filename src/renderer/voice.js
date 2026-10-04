@@ -79,7 +79,7 @@
 
     const baseThreshold = () => Math.max(floor + sens.margin, sens.min);
     const echoMode = () => niboSpeaking || tail > 0;
-    const threshold = () => (echoMode() ? Math.max(baseThreshold(), bleedPeak + 8) : baseThreshold());
+    const threshold = () => (echoMode() ? Math.max(baseThreshold(), bleedPeak + 6) : baseThreshold());
 
     function finish(events) {
       const samples = concat(utter);
@@ -123,16 +123,19 @@
         const loud = db > th;
         const events = [{ type: 'level', db, threshold: th }];
 
+        if (tail > 0) tail = Math.max(0, tail - ms);
+
         if (warmup > 0) {
-          // Learn the room before listening for speech.
-          warmup -= ms;
-          warmLevels.push(db);
-          const sorted = [...warmLevels].sort((a, b) => a - b);
-          floor = Math.min(-25, sorted[Math.floor(sorted.length / 2)]);
+          // Learn the room before listening for speech (but not from Nibo's own voice).
+          if (!echoMode()) {
+            warmup -= ms;
+            warmLevels.push(db);
+            const sorted = [...warmLevels].sort((a, b) => a - b);
+            floor = Math.min(-25, sorted[Math.floor(sorted.length / 2)]);
+          }
           return events;
         }
 
-        if (tail > 0) tail = Math.max(0, tail - ms);
         if (!echoMode()) bleedPeak = Math.max(-90, bleedPeak - 0.5); // forget old leaks slowly
 
         if (!inSpeech) {
@@ -189,8 +192,12 @@
           const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
           const spread = Math.sqrt(recent.reduce((a, b) => a + (b - mean) ** 2, 0) / recent.length);
           if (spread < 1.5) {
+            // Something clearly louder came before the steady part: that was
+            // speech, and the room just got louder after it (auto-gain). Send it.
+            const before = levels.slice(0, -recent.length);
+            const spoke = before.length > 0 && Math.max(...before) > mean + 6;
             floor = Math.min(-25, mean);
-            speechMs = 0;
+            if (!spoke) speechMs = 0;
             finish(events);
             return events;
           }
@@ -260,14 +267,16 @@
     return speechMs < 1500 && PHANTOMS.has(phrase);
   }
 
-  // Did the mic just hear Nibo's own words?
+  // Did the mic just hear Nibo's own words? Compares word pairs, so a question
+  // that merely shares common words ("can you hear me?") isn't mistaken for him.
   function isEcho(transcript, spoken) {
     const words = normalizeWords(transcript);
-    if (words.length < 2) return false; // short commands like "stop" always count
-    const said = new Set(normalizeWords(spoken));
-    if (!said.size) return false;
-    const overlap = words.filter((w) => said.has(w)).length / words.length;
-    return overlap >= 0.7;
+    if (words.length < 3) return false; // short commands like "stop" always count
+    const said = normalizeWords(spoken);
+    if (said.length < 2) return false;
+    const pairs = new Set(said.slice(1).map((w, i) => `${said[i]} ${w}`));
+    const mine = words.slice(1).map((w, i) => `${words[i]} ${w}`);
+    return mine.filter((p) => pairs.has(p)).length / mine.length >= 0.6;
   }
 
   // ---------- browser side: the microphone ----------

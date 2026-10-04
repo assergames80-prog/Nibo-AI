@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('nibo', {
   ask: (id, text, opts = {}) => ipcRenderer.invoke('nibo:ask', { id, text, search: Boolean(opts.search) }),
   transcribe: (wav) => ipcRenderer.invoke('nibo:transcribe', wav instanceof Uint8Array ? wav : new Uint8Array(wav)),
   micAccess: () => ipcRenderer.invoke('nibo:mic-access'),
+  tts: (text) => ipcRenderer.invoke('nibo:tts', String(text)),
   cancel: (id) => ipcRenderer.send('nibo:cancel', id),
   preset: (name, arg) => ipcRenderer.invoke('nibo:preset', { name, arg }),
   organize: (target) => ipcRenderer.invoke('nibo:organize', String(target)),
