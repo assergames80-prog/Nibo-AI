@@ -1,0 +1,75 @@
+{
+  "name": "nibo-ai",
+  "productName": "Nibo AI",
+  "version": "1.0.0",
+  "description": "A cute floating AI bunny assistant for your desktop.",
+  "main": "src/main/main.js",
+  "author": "Nibo AI contributors",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\"",
+    "icons": "electron scripts/make-icons.js",
+    "screenshots": "electron scripts/screenshot.js",
+    "dist:win": "electron-builder --win --x64 --publish never",
+    "dist:portable": "electron-builder --win portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.0.0"
+  },
+  "dependencies": {
+    "groq-sdk": "^1.6.0"
+  },
+  "homepage": "https://github.com/assergames80-prog/Nibo-AI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/assergames80-prog/Nibo-AI.git"
+  },
+  "build": {
+    "appId": "ai.nibo.desktop",
+    "productName": "Nibo AI",
+    "copyright": "Copyright © 2026 Nibo AI contributors",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nibo AI",
+      "runAfterFinish": true,
+      "artifactName": "Nibo-AI-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Nibo-AI-Portable-${version}.${ext}"
+    }
+  }
+}

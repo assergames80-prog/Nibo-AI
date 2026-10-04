@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>Nibo AI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="stage">
+      <!-- speech bubble -->
+      <div id="bubble" class="hit hidden" aria-live="polite">
+        <button id="bubble-close" type="button" title="Close">×</button>
+        <div id="bubble-text"></div>
+        <div id="bubble-actions"></div>
+      </div>
+
+      <!-- Nibo -->
+      <div id="nibo-wrap">
+        <div id="shadow"></div>
+        <div id="bob">
+          <div id="pose" data-eyes="open" data-mouth="w" data-brows="off" data-cheeks="normal">
+            <svg id="bunny" class="layer" viewBox="0 0 240 320" width="216" height="288" role="img" aria-label="Nibo the bunny">
+              <defs>
+                <!-- wobbly, hand-drawn outlines -->
+                <filter id="sketchy" x="-8%" y="-8%" width="116%" height="116%">
+                  <feTurbulence id="sketchy-noise" type="fractalNoise" baseFrequency="0.045" numOctaves="2" seed="2" result="noise" />
+                  <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" xChannelSelector="R" yChannelSelector="G" />
+                </filter>
+                <!-- pencil hatching for shading -->
+                <pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(40)">
+                  <line x1="0" y1="0" x2="0" y2="5" stroke="#6E58B8" stroke-width="1.3" stroke-opacity="0.4" />
+                </pattern>
+              </defs>
+
+              <g class="hit nibo-hit">
+                <g id="drawing" filter="url(#sketchy)">
+                  <!-- left ear -->
+                  <g id="ear-l">
+                    <path class="fur" d="M 84 112 C 68 84, 57 42, 69 22 C 79 6, 98 15, 106 40 C 113 61, 116 86, 114 108 Z" />
+                    <path class="pink" d="M 90 104 C 79 82, 72 53, 77 37 C 82 26, 93 32, 98 48 C 104 66, 106 86, 105 101 Z" />
+                    <path class="hatch" d="M 70 30 C 66 52, 72 80, 84 108 L 88 106 C 76 82, 70 56, 74 34 Z" />
+                    <path class="pencil" d="M 72 24 C 64 44, 68 78, 83 110" />
+                  </g>
+                  <!-- right ear: the floppy one -->
+                  <g id="ear-r">
+                    <path class="fur" d="M 126 108 C 123 84, 128 58, 140 40 C 151 25, 173 17, 193 26 C 207 33, 212 47, 203 54 C 195 60, 184 50, 172 50 C 160 51, 154 63, 152 80 C 151 92, 152 102, 154 110 Z" />
+                    <path class="pink" d="M 133 104 C 131 86, 134 67, 142 53 C 146 47, 152 49, 150 59 C 148 73, 146 90, 146 104 Z" />
+                    <path class="pink" d="M 177 41 C 187 34, 199 38, 201 47 C 193 47, 185 43, 177 41 Z" />
+                    <path class="line" d="M 149 41 C 157 35, 166 32, 175 33" />
+                    <path class="pencil" d="M 129 104 C 127 80, 132 56, 146 37 C 160 24, 182 22, 196 30" />
+                  </g>
+
+                  <!-- tail peeking out -->
+                  <path id="tail" class="light" d="M 158 270 C 150 260, 160 248, 172 253 C 180 245, 196 252, 190 263 C 200 270, 190 283, 180 278 C 174 287, 158 284, 160 276 C 152 276, 152 270, 158 270 Z" />
+
+                  <!-- feet -->
+                  <path class="fur" d="M 76 292 C 74 279, 96 275, 108 284 C 117 291, 112 301, 96 302 C 83 303, 77 299, 76 292 Z" />
+                  <path class="fur" d="M 164 292 C 166 279, 144 275, 132 284 C 123 291, 128 301, 144 302 C 157 303, 163 299, 164 292 Z" />
+
+                  <!-- body -->
+                  <path id="body" class="fur" d="M 70 236 C 66 203, 90 185, 120 186 C 152 185, 175 206, 170 238 C 167 272, 148 295, 120 294 C 90 295, 73 270, 70 236 Z" />
+                  <path class="hatch" d="M 150 198 C 168 212, 174 246, 162 272 C 154 286, 141 292, 130 293 C 150 280, 161 252, 157 226 C 156 214, 154 205, 150 198 Z" />
+                  <path id="belly" class="light" d="M 94 244 C 92 222, 104 208, 120 208 C 137 207, 149 222, 147 244 C 146 268, 135 284, 120 284 C 105 285, 95 268, 94 244 Z" />
+                  <path class="line thin" d="M 107 226 l 3 5 l 3 -5 M 125 223 l 3 5 l 3 -5 M 114 270 l 3 4 l 3 -4" />
+                  <path class="line thin" d="M 88 294 q 2 -4 1 -8 M 96 296 q 2 -4 1 -8 M 152 294 q -2 -4 -1 -8 M 144 296 q -2 -4 -1 -8" />
+
+                  <!-- arms -->
+                  <g id="arm-l">
+                    <path class="fur" d="M 80 214 C 69 226, 73 247, 90 252 C 100 255, 106 247, 100 241 C 93 235, 89 225, 88 214 Z" />
+                  </g>
+                  <g id="arm-r">
+                    <path class="fur" d="M 160 214 C 171 226, 167 247, 150 252 C 140 255, 134 247, 140 241 C 147 235, 151 225, 152 214 Z" />
+                  </g>
+
+                  <!-- fluffy cheek tufts -->
+                  <path class="fur" d="M 58 164 L 41 169 L 55 176 L 42 186 L 62 184 Z" />
+                  <path class="fur" d="M 182 164 L 199 169 L 185 176 L 198 186 L 178 184 Z" />
+
+                  <!-- head -->
+                  <path id="head" class="fur" d="M 48 160 C 44 118, 78 92, 120 92 C 164 91, 197 118, 192 158 C 190 194, 160 215, 120 214 C 80 215, 50 196, 48 160 Z" />
+                  <path class="hatch" d="M 180 166 C 174 193, 154 208, 128 212 C 153 211, 181 197, 187 160 Z" />
+                  <path class="pencil" d="M 52 150 C 54 118, 84 97, 118 96" />
+                  <!-- hair tuft -->
+                  <path class="fur" d="M 106 100 C 101 86, 113 79, 119 89 C 121 77, 137 80, 131 98 C 124 94, 113 94, 106 100 Z" />
+
+                  <!-- bow tie -->
+                  <g id="bowtie">
+                    <path class="mint" d="M 120 214 C 112 205, 99 201, 97 208 C 95 215, 98 223, 104 225 C 110 225, 116 219, 120 214 Z" />
+                    <path class="mint" d="M 120 214 C 128 205, 141 201, 143 208 C 145 215, 142 223, 136 225 C 130 225, 124 219, 120 214 Z" />
+                    <ellipse class="mint" cx="120" cy="214" rx="5.5" ry="6.5" />
+                    <circle class="dot" cx="104" cy="211" r="1.7" />
+                    <circle class="dot" cx="108" cy="219" r="1.4" />
+                    <circle class="dot" cx="136" cy="211" r="1.7" />
+                    <circle class="dot" cx="132" cy="219" r="1.4" />
+                  </g>
+                </g>
+              </g>
+            </svg>
+            <svg id="face-svg" class="layer" viewBox="0 0 240 320" width="216" height="288" aria-hidden="true">
+              <g class="hit nibo-hit">
+                <g id="face">
+                  <g id="cheeks">
+                    <ellipse class="cheek" cx="72" cy="176" rx="12.5" ry="7.5" />
+                    <ellipse class="cheek" cx="168" cy="176" rx="12.5" ry="7.5" />
+                    <path class="blush" d="M 65 175 l 3 -6 M 71 176 l 3 -6 M 77 177 l 3 -6 M 161 177 l 3 -6 M 167 176 l 3 -6 M 173 175 l 3 -6" />
+                  </g>
+
+                  <g id="eyes-look">
+                    <g id="eyes-open">
+                      <g id="eye-l">
+                        <ellipse class="eye" cx="94" cy="152" rx="11.5" ry="14" />
+                        <circle class="shine" cx="89.5" cy="146" r="4.6" />
+                        <circle class="shine" cx="98" cy="158.5" r="2" />
+                      </g>
+                      <g id="eye-r">
+                        <ellipse class="eye" cx="146" cy="152" rx="11.5" ry="14" />
+                        <circle class="shine" cx="141.5" cy="146" r="4.6" />
+                        <circle class="shine" cx="150" cy="158.5" r="2" />
+                      </g>
+                    </g>
+                  </g>
+                  <g id="eyes-happy">
+                    <path class="stroke-thick" d="M 83 157 Q 94 139 105 157" />
+                    <path class="stroke-thick" d="M 135 157 Q 146 139 157 157" />
+                  </g>
+                  <g id="eyes-closed">
+                    <path class="stroke-thick" d="M 83 152 Q 94 161 105 152" />
+                    <path class="stroke-thick" d="M 135 152 Q 146 161 157 152" />
+                  </g>
+                  <g id="brows">
+                    <path class="stroke-mid" d="M 81 135 Q 92 133 104 127" />
+                    <path class="stroke-mid" d="M 136 127 Q 148 133 159 135" />
+                  </g>
+
+                  <path id="nose" d="M 113.5 165 C 116 162, 124 162, 126.5 165 C 125.5 169.5, 122 172, 120 172 C 118 172, 114.5 169.5, 113.5 165 Z" />
+
+                  <g id="mouth-w">
+                    <path class="tooth" d="M 115.5 175 h 9 v 7.5 q 0 2.5 -2.5 2.5 h -4 q -2.5 0 -2.5 -2.5 Z" />
+                    <path class="stroke-thin" d="M 120 175.5 v 9" />
+                    <path class="stroke-mid" d="M 106 173 Q 113 181 120 173.5 Q 127 181 134 173" />
+                  </g>
+                  <g id="mouth-open">
+                    <path class="mouth" d="M 109 175 C 109 171, 131 171, 131 175 C 131 186, 125 192, 120 192 C 115 192, 109 186, 109 175 Z" />
+                    <path class="tongue" d="M 113 186 C 115 182, 125 182, 127 186 C 125 190.5, 115 190.5, 113 186 Z" />
+                    <path class="tooth" d="M 115.5 173.5 h 9 v 5 q 0 1.5 -1.5 1.5 h -6 q -1.5 0 -1.5 -1.5 Z" />
+                  </g>
+                  <g id="mouth-smile">
+                    <path class="mouth" d="M 104 173 C 111 176, 129 176, 136 173 C 134 188, 127 196, 120 196 C 113 196, 106 188, 104 173 Z" />
+                    <path class="tongue" d="M 111 189 C 114 184, 126 184, 129 189 C 126 194, 114 194, 111 189 Z" />
+                    <path class="tooth" d="M 115 175 h 10 v 6 q 0 1.5 -1.5 1.5 h -7 q -1.5 0 -1.5 -1.5 Z" />
+                  </g>
+                  <g id="mouth-sad">
+                    <path class="stroke-mid" d="M 108 185 Q 120 174 132 185" />
+                  </g>
+                  <g id="mouth-o">
+                    <ellipse class="mouth" cx="120" cy="183" rx="6" ry="8" />
+                  </g>
+
+                  <g id="whiskers">
+                    <path class="whisker" d="M 66 163 Q 52 158 38 160 M 66 169 Q 51 169 37 173 M 174 163 Q 188 158 202 160 M 174 169 Q 189 169 203 173" />
+                  </g>
+                </g>
+              </g>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="fx" aria-hidden="true"></div>
+
+      <!-- tummy & happiness -->
+      <div id="stats" class="hit ui" title="Nibo's tummy and happiness">
+        <span class="stat"><span class="stat-icon">🥕</span><span class="meter"><span id="meter-food"></span></span></span>
+        <span class="stat"><span class="stat-icon">💜</span><span class="meter"><span id="meter-joy"></span></span></span>
+      </div>
+
+      <!-- prompt bar -->
+      <form id="prompt" class="hit ui" autocomplete="off">
+        <input id="ask" type="text" maxlength="2000" placeholder="Ask Nibo anything…" aria-label="Ask Nibo anything" />
+        <button id="send" type="submit" title="Ask Nibo">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path d="M 3 11.5 L 20.5 3.5 L 14 21 L 11 13.5 Z" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button id="preset-btn" type="button" title="Silly presets (or right-click Nibo)">Preset ▾</button>
+        <button id="feed-btn" type="button" title="Feed Nibo a carrot">🥕</button>
+      </form>
+
+      <!-- preset menu -->
+      <div id="menu" class="hit hidden" role="menu">
+        <div class="menu-title">Nibo's silly menu</div>
+        <button type="button" role="menuitem" data-preset="organize">🗂️ Organize my apps</button>
+        <button type="button" role="menuitem" data-preset="joke">😂 Tell me a joke</button>
+        <button type="button" role="menuitem" data-preset="search">🔎 Search the web for…</button>
+        <button type="button" role="menuitem" data-preset="fact">💡 Fun fact, please!</button>
+        <button type="button" role="menuitem" data-preset="cheer">💖 Cheer me up</button>
+        <button type="button" role="menuitem" data-preset="feed">🥕 Feed Nibo</button>
+        <button type="button" role="menuitem" data-preset="dance">💃 Dance party!</button>
+        <button type="button" role="menuitem" data-preset="hop">🐇 Hop around</button>
+        <button type="button" role="menuitem" data-preset="nap">😴 Take a nap</button>
+        <div class="menu-row">
+          <button type="button" role="menuitem" data-preset="voice" id="voice-btn" title="Squeaky voice on/off">🔇</button>
+          <button type="button" role="menuitem" data-preset="forget" title="Forget our chat">🧹</button>
+          <button type="button" role="menuitem" data-preset="settings" title="Settings">⚙️</button>
+          <button type="button" role="menuitem" data-preset="hide" title="Hide Nibo (he waits in the tray)">🙈</button>
+          <button type="button" role="menuitem" data-preset="quit" title="Say goodbye (quit)">👋</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="bubble.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

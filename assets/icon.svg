@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Nibo's head, used for the app and tray icons -->
+  <g stroke="#3b2c5a" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" fill="#bba7f2">
+    <path d="M 78 122 C 56 86, 46 30, 70 14 C 92 2, 112 46, 116 108 Z"/>
+    <path d="M 140 108 C 142 50, 170 6, 194 16 C 218 28, 204 84, 178 122 Z"/>
+  </g>
+  <path d="M 84 112 C 72 82, 66 46, 76 34 C 86 26, 98 56, 102 106 Z" fill="#ffb3cf"/>
+  <path d="M 156 106 C 160 58, 176 28, 188 34 C 198 44, 188 80, 172 112 Z" fill="#ffb3cf"/>
+  <path d="M 26 172 C 22 120, 70 92, 128 92 C 188 92, 236 120, 230 172 C 226 218, 186 246, 128 246 C 70 246, 30 218, 26 172 Z" fill="#bba7f2" stroke="#3b2c5a" stroke-width="10" stroke-linejoin="round"/>
+  <ellipse cx="92" cy="166" rx="15" ry="19" fill="#2a1f45"/>
+  <ellipse cx="164" cy="166" rx="15" ry="19" fill="#2a1f45"/>
+  <circle cx="86" cy="158" r="6" fill="#fff"/>
+  <circle cx="158" cy="158" r="6" fill="#fff"/>
+  <ellipse cx="62" cy="196" rx="16" ry="9" fill="#ff8fb8" opacity="0.7"/>
+  <ellipse cx="194" cy="196" rx="16" ry="9" fill="#ff8fb8" opacity="0.7"/>
+  <path d="M 118 188 C 122 184, 134 184, 138 188 C 136 194, 131 197, 128 197 C 125 197, 120 194, 118 188 Z" fill="#ff8fb4" stroke="#3b2c5a" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M 108 204 Q 118 214 128 205 Q 138 214 148 204" fill="none" stroke="#3b2c5a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
