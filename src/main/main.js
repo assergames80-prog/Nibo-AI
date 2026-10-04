@@ -623,6 +623,11 @@ function registerIpc() {
   // Render a sentence with the Windows voice; the renderer plays it.
   ipcMain.handle('nibo:tts', async (e, text) => {
     if (!fromBunny(e) || !windowsVoice.available()) return { ok: false };
+    // Never make Nibo wait for a slow-starting helper: speak the old way until it's up.
+    if (!windowsVoice.started()) {
+      windowsVoice.start().catch(() => broadcastState());
+      return { ok: false };
+    }
     try {
       const { sampleRate, pcm } = await windowsVoice.synthesize(String(text || '').slice(0, 1000));
       return { ok: true, sampleRate, pcm: new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength) };

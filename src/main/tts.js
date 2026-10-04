@@ -13,7 +13,7 @@
 const { spawn } = require('child_process');
 
 const SAMPLE_RATE = 22050;
-const START_TIMEOUT_MS = 15_000;
+const START_TIMEOUT_MS = 30_000; // a cold Windows PowerShell can be slow to start
 const REQUEST_TIMEOUT_MS = 10_000;
 
 const SCRIPT = String.raw`
@@ -69,7 +69,9 @@ class WindowsVoice {
         ));
     this.child = null;
     this.ready = null;
+    this.isReady = false;
     this.broken = false;
+    this.stderr = '';
     this.nextId = 1;
     this.pending = new Map();
     this.buffer = '';
@@ -77,6 +79,11 @@ class WindowsVoice {
 
   available() {
     return this.platform === 'win32' && !this.broken;
+  }
+
+  /** True once the helper is up and answering. */
+  started() {
+    return this.isReady && Boolean(this.child);
   }
 
   start() {
@@ -90,30 +97,37 @@ class WindowsVoice {
         return;
       }
       this.child = child;
-      const timer = setTimeout(() => reject(new Error('voice helper did not start')), START_TIMEOUT_MS);
+      const fail = (message) => new Error(this.stderr.trim() ? `${message}: ${this.stderr.trim().slice(-500)}` : message);
+      const timer = setTimeout(() => reject(fail('voice helper did not start')), START_TIMEOUT_MS);
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (data) => {
         this.buffer += data;
         let nl;
         while ((nl = this.buffer.indexOf('\n')) >= 0) {
-          const line = this.buffer.slice(0, nl).replace(/\r$/, '');
+          // PowerShell may start its output with a byte-order mark.
+          const line = this.buffer.slice(0, nl).replace(/^\uFEFF/, '').trim();
           this.buffer = this.buffer.slice(nl + 1);
           if (line === 'ready') {
             clearTimeout(timer);
+            this.isReady = true;
             resolve();
-          } else {
+          } else if (line) {
             this.handleLine(line);
           }
         }
       });
-      child.stderr.on('data', () => {}); // PowerShell chatter; failures surface as timeouts
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (data) => {
+        this.stderr = (this.stderr + data).slice(-4000);
+      });
       child.on('error', (err) => {
         clearTimeout(timer);
         reject(err);
       });
       child.on('exit', () => {
         clearTimeout(timer);
-        reject(new Error('voice helper exited'));
+        this.isReady = false;
+        reject(fail('voice helper exited'));
         this.failAll(new Error('voice helper exited'));
         this.child = null;
         this.ready = null;
@@ -167,6 +181,7 @@ class WindowsVoice {
     }
     this.child = null;
     this.ready = null;
+    this.isReady = false;
   }
 }
 
