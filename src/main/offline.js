@@ -283,86 +283,17 @@ function answer(input, ctx = {}) {
   };
 }
 
-// ---------- "Organize my apps" ----------
+// ---------- "organize my files" requests ----------
 
-const CATEGORIES = [
-  { key: 'apps', label: '🚀 Zoomy shortcuts', exts: ['.lnk', '.url', '.exe', '.appref-ms', '.desktop', '.app', '.website'] },
-  { key: 'docs', label: '📄 Paper stuff', exts: ['.pdf', '.doc', '.docx', '.txt', '.md', '.rtf', '.odt', '.xls', '.xlsx', '.csv', '.ppt', '.pptx', '.pages', '.key', '.numbers'] },
-  { key: 'pics', label: '🖼️ Pretty pictures', exts: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.ico', '.tif', '.tiff'] },
-  { key: 'media', label: '🎵 Noisy things', exts: ['.mp3', '.wav', '.flac', '.ogg', '.m4a', '.mp4', '.mov', '.mkv', '.avi', '.webm'] },
-  { key: 'boxes', label: '📦 Mystery boxes', exts: ['.zip', '.rar', '.7z', '.tar', '.gz', '.iso', '.msi', '.dmg', '.pkg'] },
-  { key: 'code', label: '🧪 Nerdy stuff', exts: ['.js', '.ts', '.py', '.json', '.html', '.css', '.java', '.c', '.cpp', '.cs', '.go', '.rs', '.sh', '.bat', '.ps1'] },
-];
-
-const IGNORED = new Set(['desktop.ini', 'thumbs.db', '.ds_store', '.localized']);
-
-function extname(name) {
-  const i = name.lastIndexOf('.');
-  return i > 0 ? name.slice(i).toLowerCase() : '';
-}
-
-function prettyName(name) {
-  const ext = extname(name);
-  return ['.lnk', '.url', '.appref-ms', '.desktop', '.website'].includes(ext) ? name.slice(0, -ext.length) : name;
-}
-
-/**
- * entries: Array<{ name: string, isDir: boolean }>
- * Returns { total, piles: [{label, items}], text }
- */
-function organize(entries, rand = Math.random) {
-  const seen = new Set();
-  const clean = (entries || []).filter((e) => {
-    if (!e || typeof e.name !== 'string') return false;
-    const lower = e.name.toLowerCase();
-    if (IGNORED.has(lower) || lower.startsWith('.') || lower.startsWith('~$')) return false;
-    if (seen.has(lower)) return false;
-    seen.add(lower);
-    return true;
-  });
-
-  const piles = new Map();
-  const add = (label, name) => {
-    if (!piles.has(label)) piles.set(label, []);
-    piles.get(label).push(prettyName(name));
-  };
-
-  for (const e of clean) {
-    if (e.isDir) {
-      add('🕳️ Burrows (folders)', e.name);
-      continue;
-    }
-    const ext = extname(e.name);
-    const cat = CATEGORIES.find((c) => c.exts.includes(ext));
-    add(cat ? cat.label : '🥕 Misc. carrots', e.name);
-  }
-
-  const sorted = [...piles.entries()]
-    .map(([label, items]) => ({ label, items: items.sort((a, b) => a.localeCompare(b)) }))
-    .sort((a, b) => b.items.length - a.items.length);
-
-  const total = clean.length;
-  let text;
-  if (total === 0) {
-    text = 'I checked your desktop and it’s spotless! ✨ Did you hire another bunny to clean?';
-  } else {
-    const lines = sorted.map((p) => {
-      const sample = p.items.slice(0, 3).join(', ');
-      const more = p.items.length > 3 ? ` +${p.items.length - 3} more` : '';
-      return `${p.label} (${p.items.length}): ${sample}${more}`;
-    });
-    const verdict =
-      total > 40
-        ? pick(["That's a LOT of stuff. I got lost twice. 🗺️", 'Your desktop is basically a jungle. I love it. 🌴'], rand)
-        : total > 15
-          ? pick(['Pretty cozy in there! 🏡', 'A respectable amount of clutter. 👍'], rand)
-          : pick(['Very tidy! I approve. 🧹', 'Neat as a freshly dug burrow! 🐰'], rand);
-    text =
-      `*hops around your desktop sorting things* 🐇💨\nI sorted ${total} thing${total === 1 ? '' : 's'} into piles:\n` +
-      lines.map((l) => `- ${l}`).join('\n') +
-      `\n${verdict}\n(I only looked — nothing was moved! 🙈)`;
-  }
-  return { total, piles: sorted, text };
+// "organize my desktop", "tidy up my downloads", "clean up my files"...
+// Returns 'desktop' | 'downloads' | 'ask' | null.
+function detectOrganize(text) {
+  const t = String(text).toLowerCase();
+  if (!/\b(organi[sz]e|tidy|clean(\s*up)?|sort( out)?|declutter)\b/.test(t)) return null;
+  if (!/\b(desktop|downloads?|files|folders?|stuff|mess)\b/.test(t)) return null;
+  if (/\bdesktop\b/.test(t)) return 'desktop';
+  if (/\bdownloads?\b/.test(t)) return 'downloads';
+  return 'ask';
 }
 
 module.exports = {
@@ -380,6 +311,6 @@ module.exports = {
   extractMath,
   searchUrl,
   detectSearch,
+  detectOrganize,
   answer,
-  organize,
 };

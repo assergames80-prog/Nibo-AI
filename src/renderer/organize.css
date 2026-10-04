@@ -1,0 +1,127 @@
+html,
+body {
+  height: 100%;
+}
+
+main.tidy {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.intro {
+  margin: 0 0 10px;
+}
+
+.piles {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 6px 6px 2px;
+}
+
+.piles::-webkit-scrollbar {
+  width: 8px;
+}
+.piles::-webkit-scrollbar-thumb {
+  background: rgba(59, 44, 90, 0.3);
+  border-radius: 4px;
+}
+
+.pile {
+  padding: 8px 12px;
+}
+
+.pile-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.pile-title {
+  font-size: 19px;
+}
+
+.pile-dest {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: #f1ebff;
+  border-radius: 8px;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.badge {
+  font-size: 13px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: #e2f7ef;
+  color: #23735a;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.toggle {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 15px;
+  background: #fff;
+}
+
+.files {
+  list-style: none;
+  margin: 6px 0 2px;
+  padding: 0 0 0 28px;
+}
+
+.files li label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.file-meta {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 14px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.renamed {
+  font-size: 14px;
+  color: #8a5a00;
+  white-space: nowrap;
+}
+
+#skipped {
+  margin: 8px 0 0;
+}
+
+#skipped:empty {
+  display: none;
+}
+
+footer .small {
+  opacity: 0.75;
+  max-width: 55%;
+}

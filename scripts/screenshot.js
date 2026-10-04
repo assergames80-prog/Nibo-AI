@@ -22,6 +22,20 @@ const MONTAGE_SCENES = [
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'nibo-shots-'));
 app.setPath('userData', profile);
 
+// A messy demo Desktop for the tidy-up popup screenshot.
+const demoHome = path.join(profile, 'Bunny');
+const demoDesktop = path.join(demoHome, 'Desktop');
+fs.mkdirSync(path.join(demoDesktop, 'Pictures'), { recursive: true });
+const longAgo = new Date(Date.now() - 24 * 3600 * 1000);
+for (const f of ['beach-day.jpg', 'cat.png', 'meme.gif', 'taxes-2025.pdf', 'grocery list.txt', 'resume.docx', 'lofi beats.mp3', 'game-setup.exe', 'photos-backup.zip', 'homework.py', 'Chrome.lnk']) {
+  const file = path.join(demoDesktop, f);
+  fs.writeFileSync(file, Buffer.alloc(2048 + f.length * 5000));
+  fs.utimesSync(file, longAgo, longAgo);
+}
+fs.writeFileSync(path.join(demoDesktop, 'Pictures', 'cat.png'), 'an older cat');
+app.setPath('home', demoHome);
+app.setPath('desktop', demoDesktop);
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SCENES = [
@@ -40,7 +54,7 @@ const SCENES = [
   { name: 'feed-munch', wait: 900 },
   { name: 'feed-happy', wait: 1500 },
   { name: 'dance', js: `document.querySelector('[data-preset="dance"]').click();`, wait: 900 },
-  { name: 'organize', js: `document.querySelector('[data-preset="organize"]').click();`, wait: 1900 },
+  { name: 'organize', js: `document.querySelector('[data-preset="organize"]').click();`, wait: 700 },
   { name: 'nap', js: `document.querySelector('[data-preset="nap"]').click(); window.NiboBubble.hide();`, wait: 2600 },
 ];
 
@@ -66,9 +80,25 @@ async function main() {
     console.log(`saved ${scene.name}.png`);
   }
 
+  await tidyPopup(win);
   await montage(win);
   await mock.close();
   app.exit(0);
+}
+
+// Ask Nibo to tidy the demo Desktop and capture the approval popup.
+async function tidyPopup(win) {
+  await win.webContents.executeJavaScript(`document.querySelector('[data-preset="organize"]').click();
+    setTimeout(() => [...document.querySelectorAll('#bubble-actions button')].find((b) => b.textContent.includes('Desktop')).click(), 300);`);
+  await sleep(2000);
+  const popup = BrowserWindow.getAllWindows().find((w) => w.getTitle().includes('tidy'));
+  await popup.webContents.executeJavaScript(`const box = [...document.querySelectorAll('.files input')].find((c) => c.closest('label').title === 'resume.docx');
+    box.checked = false; box.dispatchEvent(new Event('change'));`);
+  await sleep(300);
+  fs.writeFileSync(path.join(__dirname, '..', 'docs', 'tidy-up.png'), (await popup.webContents.capturePage()).toPNG());
+  console.log('saved docs/tidy-up.png');
+  popup.close();
+  await sleep(500);
 }
 
 // Put a few scenes side by side on a pastel "desktop" for the README.

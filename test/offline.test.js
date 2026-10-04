@@ -57,27 +57,11 @@ test('unknown questions offer search and settings', () => {
   assert.equal(r.actions[0].arg, 'What is the capital of Mongolia?');
 });
 
-test('organize sorts desktop items into silly piles', () => {
-  const report = offline.organize(
-    [
-      { name: 'Chrome.lnk', isDir: false },
-      { name: 'Steam.url', isDir: false },
-      { name: 'taxes.pdf', isDir: false },
-      { name: 'cat.jpg', isDir: false },
-      { name: 'Projects', isDir: true },
-      { name: 'desktop.ini', isDir: false },
-      { name: 'mystery.xyz', isDir: false },
-      { name: 'Chrome.lnk', isDir: false },
-    ],
-    first,
-  );
-  assert.equal(report.total, 6);
-  assert.equal(report.piles[0].label, '🚀 Zoomy shortcuts');
-  assert.deepEqual(report.piles[0].items, ['Chrome', 'Steam']);
-  assert.match(report.text, /nothing was moved/);
-  assert.doesNotMatch(report.text, /desktop\.ini/);
-});
-
-test('organize handles an empty desktop', () => {
-  assert.match(offline.organize([]).text, /spotless/);
+test('detects requests to organize files', () => {
+  assert.equal(offline.detectOrganize('please organize my desktop'), 'desktop');
+  assert.equal(offline.detectOrganize('Can you tidy up my Downloads folder?'), 'downloads');
+  assert.equal(offline.detectOrganize('clean up my files'), 'ask');
+  assert.equal(offline.detectOrganize('sort out this mess'), 'ask');
+  assert.equal(offline.detectOrganize('how do I organize my life?'), null);
+  assert.equal(offline.detectOrganize('what is on my desktop?'), null);
 });

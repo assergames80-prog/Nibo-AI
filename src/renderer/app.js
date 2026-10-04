@@ -14,6 +14,7 @@
   const presetBtn = $('preset-btn');
   const feedBtn = $('feed-btn');
   const voiceBtn = $('voice-btn');
+  const undoTidyBtn = $('undo-tidy-btn');
   const eyesLook = $('eyes-look');
   const noise = $('sketchy-noise');
 
@@ -489,6 +490,9 @@
       bubble.say(res.error || 'Hmm, something went wrong. 🐰', { actions: res.actions });
       return;
     }
+    if (res.organize) {
+      return res.organize === 'ask' ? chooseFolderToTidy() : organize(res.organize);
+    }
     if (gotDelta) {
       bubble.finish(res.text, { actions: res.actions });
       speak(res.text);
@@ -551,18 +555,50 @@
     }
   }
 
-  async function organize() {
+  function chooseFolderToTidy() {
     touch();
     if (face.sleeping) wake(false);
-    say('Ooh, tidy time! Let me hop around your desktop... 🧹', { sticky: true });
+    express({ eyes: 'happy', mouth: 'smile' }, 1200);
+    say('Ooh, tidy time! 🧹 Which folder should I organize?', {
+      sticky: true,
+      actions: [
+        { label: '🖥️ Desktop', action: 'organize', arg: 'desktop' },
+        { label: '⬇️ Downloads', action: 'organize', arg: 'downloads' },
+        { label: '📁 Pick a folder…', action: 'organize', arg: 'pick' },
+      ],
+    });
+  }
+
+  async function organize(target) {
+    touch();
+    if (face.sleeping) wake(false);
+    bubble.say('*sniff sniff* Looking for loose files... 🐽', { sticky: true });
     playPose('scurry', 1200);
-    express({ eyes: 'happy', mouth: 'smile' }, 1300);
-    const [res] = await Promise.all([nibo.preset('organize'), sleep(1300)]);
-    if (!res || !res.ok) return;
-    bubble.say(res.text);
-    speak(res.text.split('\n').slice(0, 2).join(' '));
-    express({ eyes: 'happy', mouth: 'smile' }, 1600);
-    sparkles(8);
+    const res = await nibo.organize(target);
+    if (!res || (res.cancelled && !res.text)) return bubble.hide();
+    if (res.ok && res.moved) {
+      say(res.text, {
+        actions: [
+          { label: '📂 Open folder', action: 'open-organized' },
+          { label: '↩️ Undo', action: 'organize-undo' },
+        ],
+      });
+      playPose('binky', 800);
+      express({ eyes: 'happy', mouth: 'smile' }, 2000);
+      sparkles(10);
+      hearts(3);
+    } else {
+      say(res.text);
+      if (res.ok) express({ eyes: 'happy', mouth: 'smile' }, 1500);
+    }
+  }
+
+  async function undoTidy() {
+    touch();
+    const res = await nibo.organizeUndo();
+    if (!res || (res.cancelled && !res.text)) return;
+    say(res.text);
+    if (res.ok) playPose('jump', 560);
   }
 
   async function feed() {
@@ -685,7 +721,9 @@
     touch();
     switch (name) {
       case 'organize':
-        return organize();
+        return chooseFolderToTidy();
+      case 'undo-organize':
+        return undoTidy();
       case 'joke':
         return ask(`Tell me a short, silly joke about ${pick(JOKE_TOPICS)}!`);
       case 'fact':
@@ -734,6 +772,9 @@
     else if (action.action === 'settings') nibo.openSettings();
     else if (action.action === 'retry') ask(action.arg);
     else if (action.action === 'feed') feed();
+    else if (action.action === 'organize') organize(action.arg);
+    else if (action.action === 'organize-undo') undoTidy();
+    else if (action.action === 'open-organized') nibo.openOrganized();
   });
 
   // ---------- hover, click-through, menu ----------
@@ -873,6 +914,10 @@
   nibo.on('nibo:hop', (phase) => (phase === 'jump' ? playPose('jump', 560) : playPose('land', 280)));
   nibo.on('nibo:command', (cmd) => {
     if (cmd === 'feed') feed();
+    if (cmd === 'organize-review') {
+      say("Take a peek at my plan! 👀 Nothing moves until you say yes.", { sticky: true });
+      glance({ x: EYES.x - 400, y: EYES.y - 100 }, 2000);
+    }
   });
 
   presetBtn.addEventListener('click', () => (menuOpen() ? closeMenu() : openMenu()));
@@ -923,6 +968,7 @@
     state = next;
     updateMeters();
     voiceBtn.textContent = state.settings.voice ? '🔊' : '🔇';
+    undoTidyBtn.hidden = !state.canUndoOrganize;
     if (!state.clickThrough) ignoring = false;
     renderFace();
     if (prevMood && prevMood !== 'hungry' && state.mood === 'hungry' && !face.sleeping) hungryNag();

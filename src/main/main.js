@@ -6,6 +6,7 @@ const {
   app,
   BrowserWindow,
   Menu,
+  dialog,
   Tray,
   ipcMain,
   nativeImage,
@@ -18,6 +19,7 @@ const { Store } = require('./store');
 const { Brain, DEFAULT_MODEL, testKey } = require('./brain');
 const pet = require('./pet');
 const offline = require('./offline');
+const organizer = require('./organizer');
 
 const WIN_W = 360;
 const WIN_H = 620;
@@ -30,6 +32,11 @@ const RENDERER = path.join(__dirname, '..', 'renderer');
 
 let win = null;
 let settingsWin = null;
+let organizeWin = null;
+let pendingPlan = null;
+let settleApproval = null; // resolves the open approval popup's promise
+let canUndoOrganize = false;
+let fileJob = false; // a tidy-up or undo is in progress
 let tray = null;
 let store = null;
 let brain = null;
@@ -54,6 +61,12 @@ function fromBunny(event) {
 function fromSettings(event) {
   return settingsWin && !settingsWin.isDestroyed() && event.sender === settingsWin.webContents;
 }
+
+function fromOrganize(event) {
+  return organizeWin && !organizeWin.isDestroyed() && event.sender === organizeWin.webContents;
+}
+
+const historyFile = () => path.join(app.getPath('userData'), 'organize-history.json');
 
 const iconPath = () => path.join(ASSETS, 'icon.png');
 
@@ -100,6 +113,7 @@ function snapshot() {
       hasKey: brain.hasKey(),
       firstRun: Boolean(store.get('firstRun')),
     },
+    canUndoOrganize,
     platform: process.platform,
     clickThrough: CLICK_THROUGH,
   };
@@ -162,41 +176,81 @@ function showNibo() {
   win.setAlwaysOnTop(true, 'floating');
 }
 
-function openSettings() {
-  if (settingsWin && !settingsWin.isDestroyed()) {
-    settingsWin.show();
-    settingsWin.focus();
-    return;
-  }
-  settingsWin = new BrowserWindow({
-    width: 760,
-    height: 560,
+// Small framed windows (settings, the tidy-up approval popup).
+function createPopup({ page, preload, ...options }) {
+  const popup = new BrowserWindow({
     useContentSize: true,
-    resizable: false,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    title: 'Nibo AI — Settings',
     icon: iconPath(),
     backgroundColor: '#FFF8EE',
     autoHideMenuBar: true,
     show: false,
+    ...options,
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'settings-preload.js'),
+      preload: path.join(__dirname, '..', 'preload', preload),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
     },
   });
-  settingsWin.setMenu(null);
-  settingsWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  settingsWin.webContents.on('will-navigate', (e) => e.preventDefault());
-  settingsWin.once('ready-to-show', () => settingsWin.show());
+  popup.setMenu(null);
+  popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  popup.webContents.on('will-navigate', (e) => e.preventDefault());
+  popup.once('ready-to-show', () => {
+    popup.show();
+    popup.focus();
+  });
+  popup.loadFile(path.join(RENDERER, page));
+  return popup;
+}
+
+function openSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = createPopup({
+    page: 'settings.html',
+    preload: 'settings-preload.js',
+    title: 'Nibo AI — Settings',
+    width: 760,
+    height: 560,
+    resizable: false,
+  });
   settingsWin.on('closed', () => {
     settingsWin = null;
   });
-  settingsWin.loadFile(path.join(RENDERER, 'settings.html'));
+}
+
+// Shows the plan in a popup and resolves with the approved item ids, or null.
+function askApproval(plan) {
+  return new Promise((resolve) => {
+    pendingPlan = plan;
+    settleApproval = (approvedIds) => {
+      settleApproval = null;
+      pendingPlan = null;
+      resolve(approvedIds);
+      if (organizeWin && !organizeWin.isDestroyed()) organizeWin.close();
+    };
+    organizeWin = createPopup({
+      page: 'organize.html',
+      preload: 'organize-preload.js',
+      title: 'Nibo wants to tidy up!',
+      width: 600,
+      height: 640,
+      minWidth: 460,
+      minHeight: 420,
+      alwaysOnTop: true,
+    });
+    organizeWin.on('closed', () => {
+      organizeWin = null;
+      if (settleApproval) settleApproval(null);
+    });
+  });
 }
 
 function createTray() {
@@ -297,19 +351,101 @@ async function hopAround(hops = 3) {
 
 // ---------- abilities ----------
 
-async function listDesktop() {
-  const dirs = [app.getPath('desktop')];
-  if (IS_WIN && process.env.PUBLIC) dirs.push(path.join(process.env.PUBLIC, 'Desktop'));
-  const entries = [];
-  for (const dir of dirs) {
+const KNOWN_FOLDERS = ['desktop', 'downloads', 'documents', 'pictures', 'music', 'videos'];
+
+function knownFolders() {
+  return KNOWN_FOLDERS.map((name) => {
     try {
-      const items = await fs.promises.readdir(dir, { withFileTypes: true });
-      for (const item of items.slice(0, 500)) entries.push({ name: item.name, isDir: item.isDirectory() });
+      return app.getPath(name);
     } catch {
-      // folder missing or unreadable: skip it
+      return null;
     }
+  }).filter(Boolean);
+}
+
+async function chooseFolder(target) {
+  if (target === 'desktop' || target === 'downloads') return app.getPath(target);
+  if (target !== 'pick') return null;
+  const res = await dialog.showOpenDialog({
+    title: 'Which folder should Nibo tidy up?',
+    defaultPath: app.getPath('home'),
+    properties: ['openDirectory'],
+  });
+  return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
+}
+
+// One tidy-up (or undo) at a time.
+async function exclusive(job) {
+  if (fileJob) {
+    if (organizeWin) organizeWin.focus();
+    return { ok: false, text: "One thing at a time! I'm still busy with the last tidy-up. 👀" };
   }
-  return entries;
+  fileJob = true;
+  try {
+    return await job();
+  } finally {
+    fileJob = false;
+  }
+}
+
+// Plan -> approval popup -> move. Nothing is touched without a yes.
+async function organizeFolder(target) {
+  const folder = await chooseFolder(target);
+  if (!folder) return { ok: false, cancelled: true };
+  if (!organizer.isAllowedFolder(folder, { home: app.getPath('home'), known: knownFolders() })) {
+    return {
+      ok: false,
+      text: "Eek, that looks like an important system folder, so I'd better not touch it. 🙈 Try one inside your user folder, like Desktop or Downloads.",
+    };
+  }
+
+  let plan;
+  try {
+    plan = await organizer.buildPlan(folder);
+  } catch {
+    return { ok: false, text: "Hmm, I couldn't look inside that folder. 😿" };
+  }
+  if (!plan.total) return { ok: true, empty: true, text: organizer.describeEmpty(plan) };
+
+  send('nibo:command', 'organize-review');
+  const approved = await askApproval(plan);
+  if (!approved || !approved.length) return { ok: false, cancelled: true, text: "Okay! I won't touch a thing. 🐰" };
+
+  const result = await organizer.applyPlan(plan, approved);
+  if (result.moves.length) {
+    organizer.saveHistory(historyFile(), { at: Date.now(), root: plan.root, ...result });
+    canUndoOrganize = true;
+    broadcastState();
+  }
+  return { ok: true, moved: result.moves.length, text: organizer.describeResult(result) };
+}
+
+async function undoOrganize() {
+  const history = organizer.loadHistory(historyFile());
+  if (!history) {
+    canUndoOrganize = false;
+    broadcastState();
+    return { ok: false, text: "There's nothing to undo! Everything is where you left it. ✨" };
+  }
+  const n = history.moves.length;
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    title: 'Undo tidy-up',
+    message: `Put ${n} file${n === 1 ? '' : 's'} back where ${n === 1 ? 'it was' : 'they were'}?`,
+    detail: `Folder: ${history.root}\nNibo will move the files back and remove the folders he made, if they're empty.`,
+    buttons: ['Put them back', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    icon: nativeImage.createFromPath(iconPath()),
+  });
+  if (response !== 0) return { ok: false, cancelled: true, text: 'Okay, everything stays tidy! 🧹' };
+
+  const res = await organizer.undoMoves(history);
+  organizer.clearHistory(historyFile());
+  canUndoOrganize = false;
+  broadcastState();
+  return { ok: true, text: organizer.describeUndo(res) };
 }
 
 // Opens the search in the browser and returns what Nibo should say.
@@ -366,6 +502,9 @@ function registerIpc() {
     const query = offline.detectSearch(text);
     if (query) return { ok: true, text: await openSearch(query), searched: true };
 
+    const organizeTarget = offline.detectOrganize(text);
+    if (organizeTarget) return { ok: true, organize: organizeTarget };
+
     if (!brain.hasKey()) {
       const local = offline.answer(text, { mood: pet.moodOf(petState) });
       return { ok: true, offline: true, text: local.text, actions: local.actions };
@@ -408,10 +547,6 @@ function registerIpc() {
   ipcMain.handle('nibo:preset', async (e, payload) => {
     if (!fromBunny(e)) return { ok: false };
     const name = String(payload?.name ?? '');
-    if (name === 'organize') {
-      const report = offline.organize(await listDesktop());
-      return { ok: true, text: report.text, total: report.total };
-    }
     if (name === 'search') {
       const query = String(payload?.arg ?? '').trim().slice(0, 500);
       if (!query) return { ok: false };
@@ -423,6 +558,25 @@ function registerIpc() {
     }
     return { ok: false };
   });
+
+  ipcMain.handle('nibo:organize', (e, target) =>
+    fromBunny(e) ? exclusive(() => organizeFolder(String(target))) : { ok: false },
+  );
+  ipcMain.handle('nibo:organize-undo', (e) => (fromBunny(e) ? exclusive(undoOrganize) : { ok: false }));
+  ipcMain.on('nibo:open-organized', (e) => {
+    if (!fromBunny(e)) return;
+    const history = organizer.loadHistory(historyFile());
+    if (history) shell.openPath(history.root);
+  });
+
+  // ----- tidy-up approval popup -----
+
+  ipcMain.handle('organize:get-plan', (e) => (fromOrganize(e) && pendingPlan ? organizer.publicPlan(pendingPlan) : null));
+  ipcMain.on('organize:approve', (e, ids) => {
+    if (!fromOrganize(e) || !settleApproval || !Array.isArray(ids)) return;
+    settleApproval(ids.filter((id) => typeof id === 'string'));
+  });
+  ipcMain.on('organize:cancel', (e) => fromOrganize(e) && settleApproval && settleApproval(null));
 
   ipcMain.handle('nibo:feed', (e) => {
     if (!fromBunny(e)) return null;
@@ -521,6 +675,7 @@ function init() {
   });
   petState = pet.tick(store.get('pet'));
   savePet();
+  canUndoOrganize = Boolean(organizer.loadHistory(historyFile()));
 
   brain = new Brain({
     getApiKey: () => store.getApiKey(),
