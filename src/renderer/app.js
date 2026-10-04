@@ -71,7 +71,7 @@
       brows = 'on';
       mouth = 'sad';
     }
-    if (face.talking) mouth = 'talk';
+    if (face.talking || tts.active) mouth = 'talk';
     if (face.expr) {
       if (face.expr.eyes || face.expr.mouth) brows = 'off';
       eyes = face.expr.eyes || eyes;
@@ -100,7 +100,7 @@
     pose.dataset.mouth = mouth;
     pose.dataset.brows = brows;
     pose.dataset.cheeks = cheeks;
-    setBoil(face.talking || face.munching || pose.classList.contains('dance') || face.held);
+    setBoil(face.talking || tts.active || face.munching || pose.classList.contains('dance') || face.held);
   }
 
   // Temporary expression; ms = 0 keeps it until the next express()/hold().
@@ -396,7 +396,12 @@
     zTimer = null;
   }
 
-  // ---------- voice ----------
+  // ---------- Nibo's voice (text to speech) ----------
+
+  // Speech is queued one sentence at a time, so Nibo can start talking while
+  // an answer is still streaming in, and stop instantly when interrupted.
+  const tts = { queue: 0, buffer: '', active: false, log: [] };
+  const SENTENCE_END = /[.!?…]+["'”’)\]]*\s+|\n+/g;
 
   function pickVoice() {
     const voices = window.speechSynthesis.getVoices();
@@ -407,47 +412,116 @@
     );
   }
 
-  function speak(text) {
-    if (!state || !state.settings.voice || !('speechSynthesis' in window)) return;
-    const clean = bubble
+  function cleanForSpeech(text) {
+    return bubble
       .tidy(text)
       .replace(/https?:\/\/\S+/g, 'a link')
       .replace(/\*[^*\n]+\*/g, '')
       .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '')
       .replace(/^\s*-\s+/gm, '')
       .trim();
-    if (!clean) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(clean.slice(0, 700));
+  }
+
+  function setSpeaking(on) {
+    if (tts.active === on) return;
+    tts.active = on;
+    if (ears) ears.setNiboSpeaking(on);
+    renderFace();
+  }
+
+  function speakSentence(sentence) {
+    const clean = cleanForSpeech(sentence);
+    if (!clean || !('speechSynthesis' in window)) return;
+    const u = new SpeechSynthesisUtterance(clean.slice(0, 400));
     u.pitch = 1.8;
     u.rate = 1.08;
     const voice = pickVoice();
     if (voice) u.voice = voice;
-    u.onstart = () => {
-      face.talking = true;
-      renderFace();
-    };
+    tts.queue++;
+    tts.log.push({ text: clean, at: Date.now() });
+    u.onstart = () => setSpeaking(true);
     u.onend = u.onerror = () => {
-      face.talking = false;
-      renderFace();
+      tts.queue = Math.max(0, tts.queue - 1);
+      if (!tts.queue) setSpeaking(false);
     };
     window.speechSynthesis.speak(u);
   }
 
-  function stopSpeaking() {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  // Feed streamed text; complete sentences are spoken right away.
+  function feedSpeech(delta) {
+    tts.buffer += delta;
+    let cut = 0;
+    SENTENCE_END.lastIndex = 0;
+    for (let m; (m = SENTENCE_END.exec(tts.buffer)); ) {
+      if (m.index + m[0].length >= 12) cut = m.index + m[0].length;
+    }
+    if (cut) {
+      speakSentence(tts.buffer.slice(0, cut));
+      tts.buffer = tts.buffer.slice(cut);
+    }
   }
+
+  function flushSpeech() {
+    if (tts.buffer.trim()) speakSentence(tts.buffer);
+    tts.buffer = '';
+  }
+
+  function stopSpeaking() {
+    tts.buffer = '';
+    tts.queue = 0;
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    setSpeaking(false);
+  }
+
+  function speak(text) {
+    stopSpeaking();
+    feedSpeech(`${text} `);
+    flushSpeech();
+  }
+
+  // What Nibo said in the last few seconds (to recognize his own echo).
+  function recentlySaid() {
+    const cutoff = Date.now() - 20000;
+    tts.log = tts.log.filter((e) => e.at > cutoff);
+    return tts.log.map((e) => e.text).join(' ');
+  }
+
+  // Speak out loud when the voice setting is on, or while we're chatting by voice.
+  const voiceOut = () => Boolean(state && (state.settings.voice || listening));
 
   // Say something with a little mouth movement (and voice, if enabled).
   function say(text, opts) {
     bubble.say(text, opts);
-    if (state && state.settings.voice) speak(text);
+    if (voiceOut()) speak(text);
     else talkFor(clamp(String(text).length * 35, 600, 2600));
+  }
+
+  // Stop talking / thinking right now. Returns true if there was something to stop.
+  function interrupt() {
+    const busy = tts.active || tts.queue > 0 || Boolean(currentReq);
+    stopSpeaking();
+    if (currentReq) {
+      nibo.cancel(currentReq);
+      currentReq = null;
+      face.thinking = false;
+      face.talking = false;
+      lookOverride = null;
+      renderFace();
+      if (gotDelta) bubble.finish();
+    }
+    return busy;
   }
 
   // ---------- chatting ----------
 
-  async function ask(text) {
+  let reqSpeaks = false;
+
+  function sourceChips(sources) {
+    return (sources || []).map((src) => ({ label: `🔗 ${src.site}`, action: 'open-url', arg: src.url }));
+  }
+
+  // opts: { viaVoice, heard, search }
+  async function ask(text, opts = {}) {
     text = String(text || '').trim();
     if (!text) return;
     touch();
@@ -458,21 +532,22 @@
     const id = String(++reqSeq);
     currentReq = id;
     gotDelta = false;
+    reqSpeaks = Boolean(opts.viaVoice) || voiceOut();
     face.thinking = true;
     face.talking = false;
     lookOverride = { x: EYES.x + 160, y: EYES.y - 200 };
     lookAt(0, 0);
     renderFace();
     twitch();
-    bubble.thinking();
+    bubble.thinking(opts.heard ? `“${opts.heard}”` : '');
 
     let res;
     try {
-      res = await nibo.ask(id, text);
+      res = await nibo.ask(id, text, { search: opts.search });
     } catch {
       res = { ok: false, error: 'Oops, my ears got tangled. Try again? 🐰' };
     }
-    if (currentReq !== id) return; // a newer question took over
+    if (currentReq !== id) return; // a newer question (or an interruption) took over
 
     currentReq = null;
     face.thinking = false;
@@ -488,16 +563,20 @@
     if (!res.ok) {
       express({ brows: 'on', mouth: 'sad' }, 2600);
       bubble.say(res.error || 'Hmm, something went wrong. 🐰', { actions: res.actions });
+      if (reqSpeaks) speak(res.error || 'Hmm, something went wrong.');
       return;
     }
     if (res.organize) {
       return res.organize === 'ask' ? chooseFolderToTidy() : organize(res.organize);
     }
+    const actions = [...sourceChips(res.sources), ...(res.actions || [])];
     if (gotDelta) {
-      bubble.finish(res.text, { actions: res.actions });
-      speak(res.text);
+      bubble.finish(res.text, { actions });
+      if (reqSpeaks) flushSpeech();
     } else {
-      say(res.text, { actions: res.actions });
+      bubble.say(res.text, { actions });
+      if (reqSpeaks) speak(res.text);
+      else talkFor(clamp(res.text.length * 35, 600, 2600));
     }
     if (res.searched) {
       playPose('jump', 560);
@@ -517,12 +596,167 @@
       bubble.startStream();
     }
     bubble.append(delta);
+    if (reqSpeaks) feedSpeech(delta);
   });
 
-  function cancelAsk() {
-    if (!currentReq) return false;
-    nibo.cancel(currentReq);
-    return true;
+  // Nibo decided to look something up on the web.
+  nibo.on('nibo:search-status', ({ id, query }) => {
+    if (id !== currentReq) return;
+    if (reqSpeaks) flushSpeech();
+    gotDelta = false;
+    face.talking = false;
+    face.thinking = true;
+    lookOverride = { x: EYES.x - 180, y: EYES.y - 220 };
+    lookAt(0, 0);
+    renderFace();
+    twitch();
+    bubble.thinking(`🔎 Looking up “${query}”…`);
+  });
+
+  // ---------- Nibo's ears (talking to him) ----------
+
+  let ears = null;
+  let listening = false;
+  let voiceSeq = 0;
+  let ignoreUtterance = false;
+  let carry = { text: '', at: 0 }; // words heard before a short pause
+  let levelFrame = 0;
+  let lastLevel = 0;
+  const micBtn = $('mic-btn');
+  const voiceBadge = $('voice-badge');
+
+  function toggleListening() {
+    return listening ? stopListening() : startListening();
+  }
+
+  async function startListening() {
+    if (listening) return;
+    touch();
+    if (face.sleeping) wake(false);
+    if (!state.settings.hasKey) {
+      return say('I need a Groq key to understand speech! 🎤 Add one in Settings.', {
+        actions: [{ label: '⚙️ Settings', action: 'settings' }],
+      });
+    }
+    if (!window.NiboVoice || !navigator.mediaDevices) return say("Hmm, I can't use a microphone here. 😿");
+    if (!(await nibo.micAccess())) return say("I'm not allowed to use the microphone. 🎤 Check your privacy settings.");
+
+    const next = new window.NiboVoice.Ears({
+      onStart: heardSomething,
+      onUtterance: handleUtterance,
+      onDiscard: heardNothing,
+      onLevel: showLevel,
+    });
+    try {
+      await next.open(state.settings.micSensitivity);
+    } catch {
+      next.close();
+      return say(
+        "I couldn't open the microphone. 🎤 Make sure one is plugged in and that apps may use it (Windows Settings → Privacy & security → Microphone).",
+        { duration: 9000 },
+      );
+    }
+    ears = next;
+    listening = true;
+    ears.setNiboSpeaking(tts.active);
+    document.body.classList.add('listening');
+    pose.classList.add('listening');
+    micBtn.title = 'Stop listening (Ctrl+Alt+Space)';
+    playPose('jump', 560);
+    say(
+      `I'm all ears! 👂 Just talk to me.${state.settings.bargeIn !== false ? ' You can interrupt me anytime.' : ''}`,
+      { duration: 4500 },
+    );
+  }
+
+  function stopListening(quiet = false) {
+    if (!listening) return;
+    listening = false;
+    voiceSeq++;
+    carry = { text: '', at: 0 };
+    if (ears) ears.close();
+    ears = null;
+    unhear();
+    document.body.classList.remove('listening');
+    pose.classList.remove('listening');
+    micBtn.title = 'Talk to Nibo (Ctrl+Alt+Space)';
+    if (!quiet) say('Okay, my ears are taking a break. 👂💤', { duration: 2500 });
+  }
+
+  function unhear() {
+    document.body.classList.remove('hearing');
+    pose.classList.remove('hearing');
+  }
+
+  // The mic picked up the start of speech.
+  function heardSomething() {
+    touch();
+    if (face.sleeping) wake(false);
+    if ((tts.active || tts.queue) && state.settings.bargeIn === false) {
+      ignoreUtterance = true;
+      return;
+    }
+    ignoreUtterance = false;
+    interrupt();
+    document.body.classList.add('hearing');
+    pose.classList.add('hearing');
+    bubble.thinking('🎤 Listening…');
+  }
+
+  function heardNothing() {
+    unhear();
+    if (!currentReq && !ignoreUtterance) bubble.hide();
+    ignoreUtterance = false;
+  }
+
+  async function handleUtterance({ wav, speechMs }) {
+    unhear();
+    if (ignoreUtterance) {
+      ignoreUtterance = false;
+      return;
+    }
+    const turn = ++voiceSeq;
+    face.thinking = true;
+    renderFace();
+    bubble.thinking('🎤 …');
+    const res = await nibo.transcribe(wav);
+    if (turn !== voiceSeq) {
+      // More speech came in while this was transcribing: keep the words for it.
+      if (res && res.ok && listening && !window.NiboVoice.isPhantom(res.text, { speechMs })) {
+        carry = { text: `${carry.text} ${res.text}`.trim(), at: Date.now() };
+      }
+      return;
+    }
+    face.thinking = false;
+    renderFace();
+    if (!res || !res.ok) {
+      if (res && !res.aborted) say(res.error || "I couldn't hear that. 🎤", { actions: res.actions });
+      return;
+    }
+    if (window.NiboVoice.isPhantom(res.text, { speechMs }) || window.NiboVoice.isEcho(res.text, recentlySaid())) {
+      bubble.hide();
+      return;
+    }
+    const earlier = Date.now() - carry.at < 10000 ? carry.text : '';
+    carry = { text: '', at: 0 };
+    const text = `${earlier} ${res.text}`.trim();
+
+    if (/^(stop|wait|shh+|hush|be quiet|never ?mind)[.!]*$/i.test(text)) {
+      bubble.say('🤐', { duration: 1200 });
+      return;
+    }
+    if (/^(stop|quit) listening[.!]*$/i.test(text)) return stopListening();
+    ask(text, { viaVoice: true, heard: text });
+  }
+
+  function showLevel(db, threshold) {
+    lastLevel = clamp((db - threshold + 12) / 24, 0, 1);
+    if (levelFrame) return;
+    levelFrame = requestAnimationFrame(() => {
+      levelFrame = 0;
+      micBtn.style.setProperty('--level', lastLevel.toFixed(2));
+      voiceBadge.style.setProperty('--level', lastLevel.toFixed(2));
+    });
   }
 
   // ---------- presets ----------
@@ -539,7 +773,17 @@
   function exitSearchMode() {
     searchMode = false;
     document.body.classList.remove('search-mode');
-    input.placeholder = 'Ask Nibo anything…';
+    input.placeholder = 'Ask me anything…';
+  }
+
+  // In the browser (no Tavily key, or the "Search in browser" chip).
+  async function browserSearch(query) {
+    const res = await nibo.preset('search', query);
+    if (res && res.ok) {
+      say(res.text, { duration: 4000 });
+      playPose('jump', 560);
+      twitch();
+    }
   }
 
   async function doSearch(query) {
@@ -547,12 +791,8 @@
     if (!q) return enterSearchMode();
     exitSearchMode();
     touch();
-    const res = await nibo.preset('search', q);
-    if (res && res.ok) {
-      say(res.text, { duration: 4000 });
-      playPose('jump', 560);
-      twitch();
-    }
+    if (state.settings.hasSearch) return ask(q, { search: true });
+    return browserSearch(q);
   }
 
   function chooseFolderToTidy() {
@@ -775,6 +1015,8 @@
     else if (action.action === 'organize') organize(action.arg);
     else if (action.action === 'organize-undo') undoTidy();
     else if (action.action === 'open-organized') nibo.openOrganized();
+    else if (action.action === 'open-url') nibo.openExternal(action.arg);
+    else if (action.action === 'browser-search') browserSearch(action.arg);
   });
 
   // ---------- hover, click-through, menu ----------
@@ -885,7 +1127,10 @@
     if (!pressed) return;
     pressed = null;
     if (dragging) endDrag();
-    else if (e.button === 0 && e.target.closest('.nibo-hit')) poke();
+    else if (e.button === 0 && e.target.closest('.nibo-hit')) {
+      if (interrupt()) express({ eyes: 'wide', mouth: 'o' }, 900);
+      else poke();
+    }
   });
 
   document.addEventListener('contextmenu', (e) => {
@@ -914,6 +1159,8 @@
   nibo.on('nibo:hop', (phase) => (phase === 'jump' ? playPose('jump', 560) : playPose('land', 280)));
   nibo.on('nibo:command', (cmd) => {
     if (cmd === 'feed') feed();
+    if (cmd === 'toggle-voice') toggleListening();
+    if (cmd === 'stop-voice') stopListening(true);
     if (cmd === 'organize-review') {
       say("Take a peek at my plan! 👀 Nothing moves until you say yes.", { sticky: true });
       glance({ x: EYES.x - 400, y: EYES.y - 100 }, 2000);
@@ -922,6 +1169,8 @@
 
   presetBtn.addEventListener('click', () => (menuOpen() ? closeMenu() : openMenu()));
   feedBtn.addEventListener('click', () => feed());
+  micBtn.addEventListener('click', () => toggleListening());
+  voiceBadge.addEventListener('click', () => stopListening());
   menu.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-preset]');
     if (b) runPreset(b.dataset.preset);
@@ -942,7 +1191,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (menuOpen()) return closeMenu();
-    if (cancelAsk()) return;
+    if (interrupt()) return;
     if (searchMode) {
       exitSearchMode();
       bubble.hide();
@@ -969,6 +1218,7 @@
     updateMeters();
     voiceBtn.textContent = state.settings.voice ? '🔊' : '🔇';
     undoTidyBtn.hidden = !state.canUndoOrganize;
+    if (ears) ears.setSensitivity(state.settings.micSensitivity);
     if (!state.clickThrough) ignoring = false;
     renderFace();
     if (prevMood && prevMood !== 'hungry' && state.mood === 'hungry' && !face.sleeping) hungryNag();
@@ -1004,7 +1254,7 @@
     playPose('jump', 560);
     if (state.settings.firstRun) {
       const intro =
-        "Hi hi! I'm Nibo! 🐰 Hover over me to chat, right-click me for silly stuff, drag me anywhere, and feed me carrots! 🥕" +
+        "Hi hi! I'm Nibo! 🐰 Hover over me to chat (or click 🎤 to talk), right-click me for silly stuff, drag me anywhere, and feed me carrots! 🥕" +
         (state.settings.hasKey ? '' : '\nAdd a free Groq API key in Settings so I can answer anything!');
       say(intro, {
         duration: 22000,

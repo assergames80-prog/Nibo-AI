@@ -13,7 +13,7 @@
   let hovered = false;
   let pendingHideMs = 0;
   let streamText = '';
-  let rafQueued = false;
+  let renderFrame = 0; // a queued render of streamed text
   let onAction = () => {};
   let onHide = () => {};
 
@@ -25,6 +25,12 @@
       .replace(/^#{1,6}\s+/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+  }
+
+  // Drop a queued streamed-text render so it can't overwrite what comes next.
+  function cancelRender() {
+    if (renderFrame) cancelAnimationFrame(renderFrame);
+    renderFrame = 0;
   }
 
   function render(text) {
@@ -87,6 +93,7 @@
 
   // Say something. opts: { actions, duration (ms, 0 = stay), sticky }
   function say(text, opts = {}) {
+    cancelRender();
     streamText = '';
     render(text);
     setActions(opts.actions);
@@ -95,11 +102,19 @@
     scheduleHide(opts.sticky ? 0 : (opts.duration ?? readingTime(text)));
   }
 
-  function thinking() {
+  // Bouncing dots, optionally under a line like what Nibo heard or is looking up.
+  function thinking(label) {
+    cancelRender();
     streamText = '';
     clearHideTimer();
     textEl.textContent = '';
     setActions(null);
+    if (label) {
+      const line = document.createElement('div');
+      line.className = 'heard';
+      line.textContent = label;
+      textEl.append(line);
+    }
     const dots = document.createElement('span');
     dots.className = 'thinking';
     dots.append(document.createElement('span'), document.createElement('span'), document.createElement('span'));
@@ -108,6 +123,7 @@
   }
 
   function startStream() {
+    cancelRender();
     streamText = '';
     clearHideTimer();
     setActions(null);
@@ -117,16 +133,16 @@
 
   function append(delta) {
     streamText += delta;
-    if (rafQueued) return;
-    rafQueued = true;
-    requestAnimationFrame(() => {
-      rafQueued = false;
+    if (renderFrame) return;
+    renderFrame = requestAnimationFrame(() => {
+      renderFrame = 0;
       render(streamText);
       textEl.scrollTop = textEl.scrollHeight;
     });
   }
 
   function finish(text, opts = {}) {
+    cancelRender();
     const finalText = text ?? streamText;
     render(finalText);
     setActions(opts.actions);

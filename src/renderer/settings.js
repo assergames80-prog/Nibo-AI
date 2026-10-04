@@ -11,9 +11,9 @@
   const model = $('model');
   const models = $('models');
 
-  function setStatus(text, kind) {
-    status.textContent = text;
-    status.className = `status ${kind || ''}`;
+  function setStatus(text, kind, el = status) {
+    el.textContent = text;
+    el.className = `status ${kind || ''}`;
   }
 
   function fillModels(ids) {
@@ -52,6 +52,18 @@
     }
     engine.value = s.searchEngine;
 
+    if (s.hasTavily) {
+      const from = s.tavilySource === 'env' ? ' (from the TAVILY_API_KEY environment variable)' : '';
+      $('tavily-key').placeholder = `Saved: ${s.tavilyHint}${from}`;
+      setStatus('🔎 Web search is on!', 'ok', $('tavily-status'));
+      $('remove-tavily-row').hidden = s.tavilySource !== 'settings';
+    } else {
+      setStatus('No key yet: "search for…" opens your browser instead.', '', $('tavily-status'));
+    }
+    $('auto-search').checked = s.autoSearch;
+    $('mic-sensitivity').value = s.micSensitivity;
+    $('barge-in').checked = s.bargeIn;
+    $('hotkey-hint').textContent = s.hotkey ? `(or press ${s.hotkey}) ` : '';
     $('voice').checked = s.voice;
     $('boil').checked = s.boil;
     $('startup-row').hidden = !s.canStartWithSystem;
@@ -76,15 +88,33 @@
     }
   });
 
+  $('test-tavily').addEventListener('click', async () => {
+    const btn = $('test-tavily');
+    btn.disabled = true;
+    setStatus('Trying a tiny search... 🔎', '', $('tavily-status'));
+    try {
+      const res = await api.testTavily($('tavily-key').value);
+      if (res && res.ok) setStatus('✓ It works! Nibo can search the web.', 'ok', $('tavily-status'));
+      else setStatus(res && res.error ? res.error : "Hmm, that key didn't work.", 'bad', $('tavily-status'));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   $('save').addEventListener('click', async () => {
     const patch = {
       model: model.value.trim() || model.placeholder,
       searchEngine: $('engine').value,
       voice: $('voice').checked,
       boil: $('boil').checked,
+      autoSearch: $('auto-search').checked,
+      bargeIn: $('barge-in').checked,
+      micSensitivity: $('mic-sensitivity').value,
     };
     if (keyInput.value.trim()) patch.apiKey = keyInput.value.trim();
     if ($('remove-key').checked) patch.removeKey = true;
+    if ($('tavily-key').value.trim()) patch.tavilyKey = $('tavily-key').value.trim();
+    if ($('remove-tavily').checked) patch.removeTavilyKey = true;
     if (!$('startup-row').hidden) patch.startWithSystem = $('startup').checked;
     const res = await api.save(patch);
     if (res && res.ok) api.close();

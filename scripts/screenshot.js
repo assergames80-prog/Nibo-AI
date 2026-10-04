@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { app, BrowserWindow } = require('electron');
 const { startMockGroq } = require('../test/mock-groq');
+const { startMockTavily } = require('../test/mock-tavily');
 
 const OUT = path.resolve(process.argv.find((a) => a.startsWith('--out='))?.slice(6) || 'screenshots');
 const MONTAGE = path.join(__dirname, '..', 'docs', 'screenshot.png');
@@ -16,8 +17,8 @@ const MONTAGE_SCENES = [
   ['greeting', 'Floats on your desktop'],
   ['menu', 'Right-click for silly presets'],
   ['answer', 'Ask him anything (Groq)'],
+  ['search', 'Searches the web 🔎'],
   ['feed-happy', 'Feed him carrots 🥕'],
-  ['dance', 'Dance party!'],
 ];
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'nibo-shots-'));
 app.setPath('userData', profile);
@@ -50,6 +51,12 @@ const SCENES = [
     wait: 450,
   },
   { name: 'answer', wait: 1600 },
+  {
+    name: 'search',
+    js: `{ const i = document.getElementById('ask'); i.value = "What's the weather in Paris today?";
+         document.getElementById('prompt').requestSubmit(); }`,
+    wait: 3200,
+  },
   { name: 'feed-throw', js: `document.getElementById('feed-btn').click();`, wait: 420 },
   { name: 'feed-munch', wait: 900 },
   { name: 'feed-happy', wait: 1500 },
@@ -60,9 +67,17 @@ const SCENES = [
 
 async function main() {
   const mock = await startMockGroq({
-    reply: 'Bunnies munch on hay, leafy greens and the occasional carrot treat! 🥕 Hay should be most of the menu.',
+    reply: (body) =>
+      body.messages.some((m) => m.role === 'tool')
+        ? "It's sunny and 21°C in Paris today. ☀️ Perfect picnic weather, says weather.example.com!"
+        : 'Bunnies munch on hay, leafy greens and the occasional carrot treat! 🥕 Hay should be most of the menu.',
+    toolCall: (body) =>
+      /weather/i.test(body.messages.at(-1).content) ? { name: 'web_search', arguments: '{"query":"Paris weather today"}' } : null,
     chunkDelayMs: 60,
   });
+  const tavily = await startMockTavily({ validKey: 'tvly-screenshot-only' });
+  process.env.TAVILY_BASE_URL = tavily.url;
+  process.env.TAVILY_API_KEY = 'tvly-screenshot-only';
   process.env.GROQ_BASE_URL = mock.url;
   process.env.GROQ_API_KEY = 'gsk_screenshot_only';
   require('../src/main/main.js');
@@ -83,6 +98,7 @@ async function main() {
   await tidyPopup(win);
   await montage(win);
   await mock.close();
+  await tavily.close();
   app.exit(0);
 }
 
@@ -110,14 +126,14 @@ async function montage(win) {
   }).join('');
   const zoom = 0.8; // keep the montage narrower than the (virtual) screen
   const width = Math.round(MONTAGE_SCENES.length * 370 * zoom);
-  const height = Math.round(600 * zoom);
+  const height = Math.round(640 * zoom);
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     @font-face { font-family: PH; src: url(data:font/woff2;base64,${font}); }
     html { zoom: ${zoom}; overflow: hidden; }
-    body { margin: 0; width: ${MONTAGE_SCENES.length * 370}px; height: 600px; display: flex; justify-content: center; gap: 4px;
+    body { margin: 0; width: ${MONTAGE_SCENES.length * 370}px; height: 640px; display: flex; justify-content: center; gap: 4px;
       background: linear-gradient(160deg, #b9e3ff 0%, #e9dcff 50%, #ffd9ea 100%); font-family: PH, cursive; }
     figure { margin: 0; display: flex; flex-direction: column; align-items: center; }
-    .shot { width: 360px; height: 520px; background-position: 0 -100px; background-repeat: no-repeat; }
+    .shot { width: 360px; height: 565px; background-position: 0 -55px; background-repeat: no-repeat; }
     figcaption { margin-top: 6px; font-size: 26px; color: #3b2c5a; }
   </style></head><body>${tiles}</body></html>`;
   const shot = new BrowserWindow({ width, height, show: false, frame: false, webPreferences: { offscreen: true } });

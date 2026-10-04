@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Groq } = require('groq-sdk');
-const { Brain, reasoningParams, choosePreferred, testKey } = require('../src/main/brain');
+const { Brain, reasoningParams, choosePreferred, testKey, systemPrompt } = require('../src/main/brain');
 const { startMockGroq } = require('./mock-groq');
 
 function makeBrain(mock, overrides = {}) {
@@ -134,4 +134,139 @@ test('model helpers', () => {
   assert.equal(choosePreferred(['whisper-large-v3', 'some-new-model']), 'some-new-model');
   assert.equal(choosePreferred(['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']), 'llama-3.3-70b-versatile');
   assert.equal(choosePreferred([]), null);
+});
+
+test('looks things up with the web_search tool, then answers with sources', async () => {
+  const mock = await startMockGroq({
+    toolCall: (body) =>
+      body.messages.some((m) => m.role === 'tool') ? null : { name: 'web_search', arguments: JSON.stringify({ query: 'Paris weather today' }) },
+    reply: (body) => {
+      const tool = body.messages.find((m) => m.role === 'tool');
+      return tool ? `From the web: ${tool.content}` : 'no tool result';
+    },
+  });
+  try {
+    const { brain } = makeBrain(mock);
+    const searches = [];
+    const events = [];
+    const deltas = [];
+    const res = await brain.ask("What's the weather in Paris?", {
+      onDelta: (d) => deltas.push(d),
+      onEvent: (e) => events.push(e),
+      search: async (query) => {
+        searches.push(query);
+        return { text: 'Sunny, 21C (weather.example.com)', sources: [{ title: 'Paris weather', url: 'https://weather.example.com/paris', site: 'weather.example.com' }] };
+      },
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.text, 'From the web: Sunny, 21C (weather.example.com)');
+    assert.deepEqual(searches, ['Paris weather today']);
+    assert.deepEqual(events, [{ type: 'searching', query: 'Paris weather today' }]);
+    assert.deepEqual(res.sources.map((x) => x.site), ['weather.example.com']);
+    assert.equal(deltas[0], 'Let me check! ');
+
+    const [first, second] = mock.requests.filter((r) => r.url.includes('chat'));
+    assert.equal(first.body.tools[0].function.name, 'web_search');
+    assert.equal(first.body.tool_choice, 'auto');
+    assert.match(first.body.messages[0].content, /call the web_search tool/);
+    const assistant = second.body.messages.find((m) => m.tool_calls);
+    assert.deepEqual(assistant.tool_calls[0].function, { name: 'web_search', arguments: '{"query":"Paris weather today"}' });
+    assert.equal(second.body.messages.at(-1).tool_call_id, 'call_mock');
+    // Only the final answer is remembered.
+    assert.deepEqual(brain.history.map((m) => m.role), ['user', 'assistant']);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('a failed search is reported to the model instead of crashing', async () => {
+  const mock = await startMockGroq({
+    toolCall: (body) => (body.messages.some((m) => m.role === 'tool') ? null : { name: 'web_search', arguments: '{"query":"news"}' }),
+    reply: (body) => body.messages.find((m) => m.role === 'tool').content,
+  });
+  try {
+    const { brain } = makeBrain(mock);
+    const res = await brain.ask('any news?', {
+      search: async () => {
+        throw new Error('Tavily 401');
+      },
+    });
+    assert.equal(res.ok, true);
+    assert.match(res.text, /web search failed \(Tavily 401\)/);
+    assert.deepEqual(res.sources, []);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('stops after two rounds of searching', async () => {
+  // This model would search forever if we let it.
+  const mock = await startMockGroq({
+    toolCall: () => ({ name: 'web_search', arguments: '{"query":"again"}' }),
+    reply: 'Okay, here is what I found.',
+  });
+  try {
+    const { brain } = makeBrain(mock);
+    let searches = 0;
+    const res = await brain.ask('loop?', { search: async () => (searches++, { text: 'result', sources: [] }) });
+    assert.equal(res.ok, true);
+    assert.equal(res.text, 'Okay, here is what I found.');
+    assert.equal(searches, 2);
+    const chats = mock.requests.filter((r) => r.url.includes('chat'));
+    assert.deepEqual(
+      chats.map((r) => r.body.tool_choice),
+      ['auto', 'auto', 'none'],
+    );
+  } finally {
+    await mock.close();
+  }
+});
+
+test('answers from given search results without offering the tool', async () => {
+  const mock = await startMockGroq({ reply: 'Here you go!' });
+  try {
+    const { brain } = makeBrain(mock);
+    const res = await brain.ask('search for bunny facts', { context: 'Web search results for "bunny facts": ...' });
+    assert.equal(res.ok, true);
+    const body = mock.requests.at(-1).body;
+    assert.equal(body.tools, undefined);
+    assert.match(body.messages[0].content, /asked you to search the web/);
+    assert.equal(body.messages.at(-2).content, 'Web search results for "bunny facts": ...');
+  } finally {
+    await mock.close();
+  }
+});
+
+test('without search the prompt points at the menu instead', () => {
+  assert.match(systemPrompt(), /suggest the "Search the web" option/);
+  assert.doesNotMatch(systemPrompt('search'), /\{\{/);
+});
+
+test('transcribes speech with Whisper on Groq', async () => {
+  const mock = await startMockGroq({ transcript: 'what time is it nibo' });
+  try {
+    const { brain } = makeBrain(mock);
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(100)]);
+    const res = await brain.transcribe(wav);
+    assert.deepEqual(res, { ok: true, text: 'what time is it nibo' });
+    const req = mock.requests.at(-1);
+    assert.equal(req.url, '/openai/v1/audio/transcriptions');
+    assert.match(req.multipart, /whisper-large-v3-turbo/);
+    assert.match(req.multipart, /filename="speech.wav"/);
+    assert.match(req.multipart, /RIFF/);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('transcription errors are friendly', async () => {
+  const mock = await startMockGroq({ transcribeStatus: 401 });
+  try {
+    const { brain } = makeBrain(mock);
+    const res = await brain.transcribe(Buffer.from('RIFF'));
+    assert.equal(res.ok, false);
+    assert.equal(res.kind, 'auth');
+  } finally {
+    await mock.close();
+  }
 });

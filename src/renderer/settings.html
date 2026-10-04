@@ -76,10 +76,43 @@
         </section>
 
         <section>
-          <h2>🐰 Behavior</h2>
-          <label for="engine">Search the web with</label>
+          <h2>🔎 Web search (Tavily)</h2>
+          <p class="hint">
+            With a <a href="#" data-href="https://app.tavily.com/home">Tavily</a> key, Nibo really searches the web and
+            answers with sources. Tavily has a free plan.
+          </p>
+          <label for="tavily-key">API key</label>
+          <div class="row">
+            <input id="tavily-key" type="password" placeholder="tvly-…" autocomplete="off" spellcheck="false" />
+            <button id="test-tavily" type="button">Test</button>
+          </div>
+          <p id="tavily-status" class="status"></p>
+          <label class="check" id="remove-tavily-row" hidden>
+            <input id="remove-tavily" type="checkbox" /> Forget the saved key
+          </label>
+          <label class="check"><input id="auto-search" type="checkbox" /> Let Nibo look things up by himself</label>
+          <label for="engine">Open browser searches with</label>
           <select id="engine"></select>
-          <label class="check"><input id="voice" type="checkbox" /> Squeaky voice (Nibo reads replies out loud)</label>
+        </section>
+
+        <section>
+          <h2>🎤 Voice chat</h2>
+          <p class="hint">
+            Click 🎤 <span id="hotkey-hint"></span>and just talk. Nibo answers out loud, and you can talk over him to
+            interrupt. Speech is turned into text by Whisper on Groq, using your Groq key.
+          </p>
+          <label for="mic-sensitivity">Microphone sensitivity</label>
+          <select id="mic-sensitivity">
+            <option value="low">Low (noisy room)</option>
+            <option value="normal">Normal</option>
+            <option value="high">High (quiet voice)</option>
+          </select>
+          <label class="check"><input id="barge-in" type="checkbox" /> Let me interrupt Nibo by talking</label>
+          <label class="check"><input id="voice" type="checkbox" /> Read typed answers out loud too</label>
+        </section>
+
+        <section>
+          <h2>🐰 Behavior</h2>
           <label class="check"><input id="boil" type="checkbox" /> Wiggly hand-drawn lines while Nibo talks</label>
           <label class="check" id="startup-row" hidden>
             <input id="startup" type="checkbox" /> Start Nibo when I log in

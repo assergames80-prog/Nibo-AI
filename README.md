@@ -1,10 +1,10 @@
 # 🐰 Nibo AI
 
 A cute, hand-drawn AI bunny who floats on your desktop, answers your questions at
-[Groq](https://groq.com) speed, tells silly jokes and *really* likes carrots.
+[Groq](https://groq.com) speed, searches the web, chats with you out loud, tells silly jokes and *really* likes carrots.
 Inspired by classic desktop buddies like BonziBuddy.
 
-![Nibo floating on a desktop: greeting, preset menu, answering a question, eating a carrot and dancing](docs/screenshot.png)
+![Nibo floating on a desktop: greeting, preset menu, answering a question, answering from a web search with source links, and eating a carrot](docs/screenshot.png)
 
 ## Features
 
@@ -13,6 +13,10 @@ Inspired by classic desktop buddies like BonziBuddy.
 - **Hand-drawn SVG.** Wobbly sketch outlines, pencil hatching, a floppy ear and a little bow tie.
   He blinks, twitches his ears, waves, and his eyes follow your mouse.
 - **Ask him anything.** Hover over Nibo and a prompt bar pops up. Answers stream into a speech bubble via the Groq API.
+- **Searches the web for real.** With a [Tavily](https://tavily.com) key, Nibo looks things up by himself when a
+  question needs fresh info (weather, news, prices…) and answers with clickable source links.
+- **Talk to him.** Click 🎤 (or press **Ctrl+Alt+Space** anywhere) and just speak. He answers out loud while the reply
+  streams in, keeps listening hands-free, and you can **interrupt him by talking over him**.
 - **Silly presets.** Click **Preset ▾** or right-click Nibo:
   - 🗂️ Organize my files (for real, with your approval, see below)
   - 😂 Tell me a joke
@@ -28,7 +32,8 @@ Inspired by classic desktop buddies like BonziBuddy.
   Pictures, Documents, Music & Videos, Archives & Installers and Code folders, but only after you approve his plan.
 - **Feed him.** Hit the 🥕 button and he munches happily, does a binky and floats hearts. Over time he gets hungry:
   a sad face, a rumbling tummy and hints about carrots. Feed him too much and he's stuffed.
-- **Squeaky voice (optional).** Nibo can read his replies out loud with your system's text-to-speech.
+- **Squeaky voice.** Nibo speaks with your system's text-to-speech: always during voice chat, and optionally for
+  typed questions too.
 - **Works offline too.** Without an API key, his little bunny brain still handles greetings, jokes, fun facts,
   math, the time and date, and offers to search the web for everything else.
 - **Lives in the tray.** You can hide him, bring him back, and have him start when you log in.
@@ -53,6 +58,32 @@ You can also set a `GROQ_API_KEY` environment variable instead.
 The default model is `openai/gpt-oss-20b`, which is fast. You can pick any Groq chat model in Settings,
 and if a model is ever retired, Nibo switches to another available one by himself.
 
+## Let him search the web (Tavily API key)
+
+1. Get an API key at [app.tavily.com](https://app.tavily.com/home) (there's a free plan).
+2. Right-click Nibo → ⚙️ **Settings** → **Web search (Tavily)**, paste the key, press **Test**, then **Save 🥕**.
+
+Now Nibo searches by himself whenever a question needs it. You'll see *"🔎 Looking up …"* while he does, and
+🔗 chips under his answer link to the sources. Saying *"search for …"* or using **Search the web for…** in his
+menu always searches. Without a Tavily key, those open your browser instead. You can turn off "Let Nibo look
+things up by himself" in Settings, or use the `TAVILY_API_KEY` environment variable.
+
+## Talk to him (voice chat)
+
+Click the 🎤 button in the prompt bar, or press **Ctrl+Alt+Space** from anywhere, and start talking. His ears perk
+up while he listens, and a little 👂 badge shows he's still listening when the prompt bar is hidden.
+
+- Speech is turned into text by Whisper on Groq, so voice chat uses your **Groq key**. No extra setup needed.
+- He answers out loud, sentence by sentence, while the reply streams in. Then he keeps listening, hands-free.
+- **Interrupt him** any time by talking over him. He stops mid-sentence and listens. Clicking him or pressing
+  **Esc** also stops him.
+- Say *"stop listening"*, click 🎤 again, or press **Ctrl+Alt+Space** to end voice chat.
+- In Settings you can set the microphone sensitivity (handy in noisy rooms) and turn off talk-to-interrupt.
+
+Windows has to allow desktop apps to use the microphone: **Settings → Privacy & security → Microphone**. Nibo's
+voice comes from your system's text-to-speech voices. If his own voice from your speakers ever cuts him off,
+lower the volume, use headphones, or set the sensitivity to **Low**.
+
 ## Organize my files
 
 Right-click Nibo → 🗂️ **Organize my files** (or just tell him *"organize my desktop"* or *"tidy up my downloads"*),
@@ -76,7 +107,9 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 | --- | --- |
 | Hover over him | Shows the prompt bar, tummy 🥕 and happiness 💜 meters |
 | Type and press Enter | Answers in his speech bubble (Esc cancels) |
-| Type `search for …` / `google …` | Opens the search in your browser |
+| Click 🎤 or press **Ctrl+Alt+Space** | Voice chat: talk to him, hands-free |
+| Talk over him / click him / Esc | He stops talking and listens |
+| Type `search for …` / `google …` | Searches the web (or opens your browser without a Tavily key) |
 | Click him | Giggles (and wakes up if he's napping) |
 | Drag him | Dangles while you carry him, then lands with a squish |
 | Right-click him / **Preset ▾** | Opens the silly menu |
@@ -88,10 +121,13 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 
 - What you ask is sent to Groq only when an API key is set. The chat history lives in memory (the last few
   messages) and is wiped by 🧹 *Forget our chat* or by quitting.
+- Web searches send just the search query to Tavily. Results are used only to answer you.
+- The microphone is only on while voice chat is on, as shown by the pink 🎤 and the 👂 badge. Only the bits where
+  Nibo detects speech are sent to Groq for transcription. Audio is never saved.
 - **Organize my files** runs entirely on your computer: file names are never sent to Groq or anywhere else.
   Files only move after you approve the plan, and the last tidy-up is remembered (in `%APPDATA%\Nibo AI\`) so
   you can undo it.
-- Your API key is encrypted with the operating system's secure storage (DPAPI on Windows) and kept in Nibo's
+- Your API keys are encrypted with the operating system's secure storage (DPAPI on Windows) and kept in Nibo's
   settings file in `%APPDATA%\Nibo AI\`.
 - Web searches open in your default browser with Google, DuckDuckGo or Bing (your choice).
 
@@ -114,22 +150,24 @@ GitHub Actions builds both on a Windows runner for every push. To publish a rele
 Other helpers:
 
 - `npm run icons` re-renders `assets/*.png` from `assets/icon.svg`.
-- `npm run screenshots` plays a few scenes against a fake Groq server and refreshes the images in `docs/`.
+- `npm run screenshots` plays a few scenes against fake Groq and Tavily servers and refreshes the images in `docs/`.
 
 ### Project layout
 
 ```
 src/main/       Electron main process
   main.js       window, tray, dragging, hopping, IPC
-  brain.js      Groq chat (streaming, friendly errors, model fallback)
+  brain.js      Groq chat (streaming, web_search tool, model fallback) + Whisper speech-to-text
+  websearch.js  Tavily web search
   offline.js    the offline bunny brain, web search URLs, chat intents
   organizer.js  file tidying: plan, apply, undo
   pet.js        tummy & happiness
   store.js      settings + encrypted API key
 src/preload/    the small, safe APIs exposed to the pages
-src/renderer/   Nibo himself: SVG bunny (index.html), styles, behavior (app.js), speech bubble, settings
+src/renderer/   Nibo himself: SVG bunny (index.html), styles, behavior (app.js), speech bubble, voice input
+                (voice.js: mic, speech detection, talk-over-to-interrupt), settings
 assets/         app and tray icons
-test/           unit tests and a mock Groq server
+test/           unit tests and mock Groq / Tavily servers
 ```
 
 ## Credits

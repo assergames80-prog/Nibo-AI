@@ -803,7 +803,7 @@ body:not(.show-ui) .ui * {
   top: 550px;
   height: 46px;
   display: flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
   padding: 5px;
   background: var(--paper);
@@ -816,8 +816,8 @@ body:not(.show-ui) .ui * {
   flex: 1;
   min-width: 0;
   height: 32px;
-  padding: 0 10px;
-  font: 18px var(--font);
+  padding: 0 4px 0 8px;
+  font: 17px var(--font);
   color: var(--ink);
   background: transparent;
   border: none;
@@ -849,17 +849,17 @@ body.search-mode #prompt {
   box-shadow: 1px 1px 0 rgba(59, 44, 90, 0.25);
 }
 #send {
-  width: 36px;
+  width: 32px;
   display: grid;
   place-items: center;
   color: #7a5cd6;
 }
 #preset-btn {
-  padding: 0 9px;
+  padding: 0 7px;
   font-size: 16px;
 }
 #feed-btn {
-  width: 36px;
+  width: 32px;
   font-size: 17px;
 }
 
@@ -932,4 +932,75 @@ body.search-mode #prompt {
 }
 .menu-row button:hover {
   background: #ffe7c6;
+}
+
+/* ---------- voice chat ---------- */
+
+#mic-btn {
+  width: 32px;
+  display: grid;
+  place-items: center;
+  color: #d6457a;
+  transition: box-shadow 0.08s;
+}
+
+body.listening #mic-btn {
+  background: #ffd6e2;
+  box-shadow:
+    0 0 0 calc(var(--level, 0) * 7px) rgba(255, 127, 175, 0.45),
+    2px 2px 0 rgba(59, 44, 90, 0.25);
+}
+
+#voice-badge {
+  position: absolute;
+  z-index: 6;
+  left: 66px;
+  top: 452px;
+  width: 40px;
+  height: 40px;
+  display: none;
+  place-items: center;
+  padding: 0;
+  font-size: 20px;
+  background: #ffd6e2;
+  border: 2.5px solid var(--ink);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow:
+    0 0 0 calc(var(--level, 0) * 9px) rgba(255, 127, 175, 0.45),
+    2px 3px 0 rgba(59, 44, 90, 0.25);
+  transition: box-shadow 0.08s;
+}
+
+body.listening:not(.show-ui) #voice-badge {
+  display: grid;
+}
+
+body.hearing #voice-badge,
+body.hearing #mic-btn {
+  background: #ffb3cf;
+}
+
+.heard {
+  margin-bottom: 2px;
+  font-style: italic;
+  opacity: 0.75;
+}
+
+/* ears perk up while he listens, and wiggle while you talk */
+#ear-l,
+#ear-r {
+  transition: transform 0.3s ease;
+}
+#pose.listening #ear-l {
+  transform: rotate(-5deg);
+}
+#pose.listening #ear-r {
+  transform: rotate(-10deg);
+}
+#pose.hearing #ear-l {
+  animation: twitch-l 0.5s ease-in-out infinite;
+}
+#pose.hearing #ear-r {
+  animation: twitch-r 0.5s ease-in-out infinite;
 }

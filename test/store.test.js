@@ -62,3 +62,34 @@ test('repairs a corrupt file and bad values', () => {
   fs.writeFileSync(file, JSON.stringify({ searchEngine: 'altavista' }));
   assert.equal(new Store(file, fakeCipher).get('searchEngine'), 'google');
 });
+
+test('keeps the Tavily key separately, encrypted, with its own env fallback', () => {
+  const file = tmpFile();
+  const s = new Store(file, fakeCipher);
+  s.setApiKey('gsk_groq_key_1234');
+  s.setSecret('tavily', 'tvly-secret-5678');
+  assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /tvly-secret/);
+
+  const again = new Store(file, fakeCipher);
+  assert.equal(again.getSecret('tavily'), 'tvly-secret-5678');
+  assert.equal(again.getApiKey(), 'gsk_groq_key_1234');
+  assert.equal(again.secretHint('tavily'), 'tvly…5678');
+
+  again.setSecret('tavily', '');
+  const old = process.env.TAVILY_API_KEY;
+  process.env.TAVILY_API_KEY = 'tvly-env';
+  try {
+    assert.equal(again.getSecret('tavily'), 'tvly-env');
+    assert.equal(again.secretSource('tavily'), 'env');
+    assert.equal(again.getApiKey(), 'gsk_groq_key_1234');
+  } finally {
+    if (old === undefined) delete process.env.TAVILY_API_KEY;
+    else process.env.TAVILY_API_KEY = old;
+  }
+});
+
+test('repairs an unknown mic sensitivity', () => {
+  const file = tmpFile();
+  fs.writeFileSync(file, JSON.stringify({ micSensitivity: 'deafening' }));
+  assert.equal(new Store(file, fakeCipher).get('micSensitivity'), 'normal');
+});

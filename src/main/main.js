@@ -7,19 +7,23 @@ const {
   BrowserWindow,
   Menu,
   dialog,
+  globalShortcut,
   Tray,
   ipcMain,
   nativeImage,
   safeStorage,
   screen,
+  session,
   shell,
+  systemPreferences,
 } = require('electron');
 
-const { Store } = require('./store');
+const { Store, MIC_SENSITIVITIES } = require('./store');
 const { Brain, DEFAULT_MODEL, testKey } = require('./brain');
 const pet = require('./pet');
 const offline = require('./offline');
 const organizer = require('./organizer');
+const web = require('./websearch');
 
 const WIN_W = 360;
 const WIN_H = 620;
@@ -29,6 +33,7 @@ const IS_MAC = process.platform === 'darwin';
 const CLICK_THROUGH = IS_WIN || IS_MAC;
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const RENDERER = path.join(__dirname, '..', 'renderer');
+const VOICE_HOTKEY = 'CommandOrControl+Alt+Space';
 
 let win = null;
 let settingsWin = null;
@@ -37,6 +42,7 @@ let pendingPlan = null;
 let settleApproval = null; // resolves the open approval popup's promise
 let canUndoOrganize = false;
 let fileJob = false; // a tidy-up or undo is in progress
+let hotkeyReady = false;
 let tray = null;
 let store = null;
 let brain = null;
@@ -111,12 +117,57 @@ function snapshot() {
       searchEngine: store.get('searchEngine'),
       model: store.get('model') || DEFAULT_MODEL,
       hasKey: brain.hasKey(),
+      hasSearch: hasSearch(),
+      autoSearch: store.get('autoSearch') !== false,
+      bargeIn: store.get('bargeIn') !== false,
+      micSensitivity: store.get('micSensitivity'),
+      hotkey: hotkeyReady ? 'Ctrl+Alt+Space' : null,
       firstRun: Boolean(store.get('firstRun')),
     },
     canUndoOrganize,
     platform: process.platform,
     clickThrough: CLICK_THROUGH,
   };
+}
+
+const hasSearch = () => Boolean(store.getSecret('tavily'));
+
+function moodStatus() {
+  return { mood: pet.moodOf(petState), fullness: petState.fullness, localTime: new Date().toLocaleString() };
+}
+
+// What the brain calls when the model decides to look something up.
+function webSearchTool() {
+  const key = store.getSecret('tavily');
+  if (!key || store.get('autoSearch') === false) return undefined;
+  return async (query, signal) => {
+    const search = await web.tavilySearch(key, query, { signal });
+    return { text: web.formatForModel(search), sources: web.sourcesOf(search) };
+  };
+}
+
+// "Search for X": look it up with Tavily and answer from the results.
+async function answerFromWeb(text, query, { signal, onDelta, onEvent }) {
+  onEvent({ type: 'searching', query });
+  let search;
+  try {
+    search = await web.tavilySearch(store.getSecret('tavily'), query, { signal });
+  } catch (err) {
+    if (signal.aborted) return { ok: false, aborted: true };
+    const actions = [{ label: '🌐 Search in browser', action: 'browser-search', arg: query }];
+    if (err.kind === 'auth') actions.push({ label: '⚙️ Settings', action: 'settings' });
+    return { ok: false, error: web.friendlySearchError(err), actions };
+  }
+  const sources = web.sourcesOf(search);
+  if (!brain.hasKey()) return { ok: true, text: web.formatForBubble(search), sources, searched: true };
+  const result = await brain.ask(text, { signal, onDelta, status: moodStatus(), context: web.formatForModel(search) });
+  return result.ok ? { ...result, sources, searched: true } : result;
+}
+
+function hideNibo() {
+  if (!win) return;
+  send('nibo:command', 'stop-voice');
+  win.hide();
 }
 
 function broadcastState() {
@@ -217,8 +268,8 @@ function openSettings() {
     page: 'settings.html',
     preload: 'settings-preload.js',
     title: 'Nibo AI — Settings',
-    width: 760,
-    height: 560,
+    width: 780,
+    height: Math.min(800, screen.getPrimaryDisplay().workArea.height - 40),
     resizable: false,
   });
   settingsWin.on('closed', () => {
@@ -265,7 +316,8 @@ function createTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Show Nibo', click: showNibo },
-      { label: 'Hide Nibo', click: () => win && win.hide() },
+      { label: 'Hide Nibo', click: hideNibo },
+      { label: 'Talk to Nibo 🎤 (Ctrl+Alt+Space)', click: () => (showNibo(), send('nibo:command', 'toggle-voice')) },
       { type: 'separator' },
       { label: 'Feed Nibo 🥕', click: () => (showNibo(), send('nibo:command', 'feed')) },
       { label: 'Settings…', click: openSettings },
@@ -275,7 +327,7 @@ function createTray() {
   );
   tray.on('click', () => {
     if (!win) return;
-    if (win.isVisible()) win.hide();
+    if (win.isVisible()) hideNibo();
     else showNibo();
   });
 }
@@ -499,31 +551,36 @@ function registerIpc() {
     const text = String(payload?.text ?? '').trim().slice(0, 4000);
     if (!text) return { ok: false };
 
-    const query = offline.detectSearch(text);
-    if (query) return { ok: true, text: await openSearch(query), searched: true };
+    // "search for X" (or the menu's search) looks it up for real when Tavily is set up.
+    const query = payload?.search ? text.slice(0, 400) : offline.detectSearch(text);
+    if (query && !hasSearch()) return { ok: true, text: await openSearch(query), searched: true };
 
-    const organizeTarget = offline.detectOrganize(text);
-    if (organizeTarget) return { ok: true, organize: organizeTarget };
-
-    if (!brain.hasKey()) {
-      const local = offline.answer(text, { mood: pet.moodOf(petState) });
-      return { ok: true, offline: true, text: local.text, actions: local.actions };
+    if (!query) {
+      const organizeTarget = offline.detectOrganize(text);
+      if (organizeTarget) return { ok: true, organize: organizeTarget };
+      if (!brain.hasKey()) {
+        const local = offline.answer(text, { mood: pet.moodOf(petState) });
+        return { ok: true, offline: true, text: local.text, actions: local.actions };
+      }
     }
 
     const controller = new AbortController();
     inflight.set(id, controller);
+    const live = (channel, data) => {
+      if (!e.sender.isDestroyed()) e.sender.send(channel, { id, ...data });
+    };
+    const onDelta = (delta) => live('nibo:delta', { delta });
+    const onEvent = (ev) => ev.type === 'searching' && live('nibo:search-status', { query: ev.query });
     try {
-      const result = await brain.ask(text, {
-        signal: controller.signal,
-        status: {
-          mood: pet.moodOf(petState),
-          fullness: petState.fullness,
-          localTime: new Date().toLocaleString(),
-        },
-        onDelta: (delta) => {
-          if (!e.sender.isDestroyed()) e.sender.send('nibo:delta', { id, delta });
-        },
-      });
+      const result = query
+        ? await answerFromWeb(text, query, { signal: controller.signal, onDelta, onEvent })
+        : await brain.ask(text, {
+            signal: controller.signal,
+            status: moodStatus(),
+            onDelta,
+            onEvent,
+            search: webSearchTool(),
+          });
       if (result.ok) {
         petState = pet.cheer(petState, 1);
         savePet();
@@ -536,6 +593,29 @@ function registerIpc() {
     } finally {
       inflight.delete(id);
     }
+  });
+
+  ipcMain.handle('nibo:transcribe', async (e, audio) => {
+    if (!fromBunny(e)) return { ok: false };
+    if (!(audio instanceof Uint8Array) || audio.length < 44 || audio.length > 10 * 1024 * 1024) {
+      return { ok: false, error: "Hmm, that recording didn't work. 🎤 Try again?" };
+    }
+    if (!brain.hasKey()) {
+      return {
+        ok: false,
+        error: 'I need a Groq key to understand speech! 🎤 Add one in Settings.',
+        actions: [{ label: '⚙️ Settings', action: 'settings' }],
+      };
+    }
+    const result = await brain.transcribe(Buffer.from(audio));
+    if (!result.ok && result.kind === 'auth') result.actions = [{ label: '⚙️ Open Settings', action: 'settings' }];
+    return result;
+  });
+
+  ipcMain.handle('nibo:mic-access', async (e) => {
+    if (!fromBunny(e)) return false;
+    if (IS_MAC) return systemPreferences.askForMediaAccess('microphone');
+    return true;
   });
 
   ipcMain.on('nibo:cancel', (e, id) => {
@@ -602,7 +682,7 @@ function registerIpc() {
   ipcMain.on('nibo:clear-chat', (e) => fromBunny(e) && brain.reset());
   ipcMain.on('nibo:first-run-done', (e) => fromBunny(e) && store.set({ firstRun: false }));
   ipcMain.on('nibo:open-settings', (e) => fromBunny(e) && openSettings());
-  ipcMain.on('nibo:hide', (e) => fromBunny(e) && win.hide());
+  ipcMain.on('nibo:hide', (e) => fromBunny(e) && hideNibo());
   ipcMain.on('nibo:quit', (e) => fromBunny(e) && app.quit());
   ipcMain.on('nibo:open-external', (e, url) => {
     if (fromBunny(e) && isWebUrl(url)) shell.openExternal(String(url));
@@ -616,6 +696,13 @@ function registerIpc() {
       hasKey: brain.hasKey(),
       keyHint: store.keyHint(),
       keySource: store.keySource(),
+      hasTavily: hasSearch(),
+      tavilyHint: store.secretHint('tavily'),
+      tavilySource: store.secretSource('tavily'),
+      autoSearch: store.get('autoSearch') !== false,
+      bargeIn: store.get('bargeIn') !== false,
+      micSensitivity: store.get('micSensitivity'),
+      hotkey: hotkeyReady ? 'Ctrl+Alt+Space' : null,
       model: store.get('model') || DEFAULT_MODEL,
       defaultModel: DEFAULT_MODEL,
       searchEngine: store.get('searchEngine'),
@@ -633,12 +720,17 @@ function registerIpc() {
     if (!fromSettings(e) || !patch || typeof patch !== 'object') return { ok: false };
     if (patch.removeKey === true) store.setApiKey('');
     else if (typeof patch.apiKey === 'string' && patch.apiKey.trim()) store.setApiKey(patch.apiKey);
+    if (patch.removeTavilyKey === true) store.setSecret('tavily', '');
+    else if (typeof patch.tavilyKey === 'string' && patch.tavilyKey.trim()) store.setSecret('tavily', patch.tavilyKey);
 
     const next = {};
     if (typeof patch.model === 'string' && /^[\w.\-/:]{1,120}$/.test(patch.model.trim())) next.model = patch.model.trim();
     if (Object.hasOwn(offline.SEARCH_ENGINES, patch.searchEngine)) next.searchEngine = patch.searchEngine;
     if (typeof patch.voice === 'boolean') next.voice = patch.voice;
     if (typeof patch.boil === 'boolean') next.boil = patch.boil;
+    if (typeof patch.autoSearch === 'boolean') next.autoSearch = patch.autoSearch;
+    if (typeof patch.bargeIn === 'boolean') next.bargeIn = patch.bargeIn;
+    if (MIC_SENSITIVITIES.includes(patch.micSensitivity)) next.micSensitivity = patch.micSensitivity;
     store.set(next);
 
     if ((IS_WIN || IS_MAC) && typeof patch.startWithSystem === 'boolean') {
@@ -654,6 +746,13 @@ function registerIpc() {
     const candidate = typeof key === 'string' && key.trim() ? key.trim() : store.getApiKey();
     if (!candidate) return { ok: false, error: 'Paste a Groq API key first! 🔑' };
     return testKey(candidate);
+  });
+
+  ipcMain.handle('settings:test-tavily', async (e, key) => {
+    if (!fromSettings(e)) return { ok: false };
+    const candidate = typeof key === 'string' && key.trim() ? key.trim() : store.getSecret('tavily');
+    if (!candidate) return { ok: false, error: 'Paste a Tavily API key first! 🔑' };
+    return web.testTavilyKey(candidate);
   });
 
   ipcMain.on('settings:open-external', (e, url) => {
@@ -683,9 +782,29 @@ function init() {
     setModel: (model) => store.set({ model }),
   });
 
+  // Only Nibo's own window may use the microphone, and only for audio.
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+    const audioOnly = permission === 'media' && (details.mediaTypes || []).every((t) => t === 'audio');
+    callback(Boolean(win && wc === win.webContents && audioOnly));
+  });
+  session.defaultSession.setPermissionCheckHandler(
+    (wc, permission, origin, details) =>
+      permission === 'media' && Boolean(win && wc === win.webContents) && (!details.mediaType || details.mediaType === 'audio'),
+  );
+
   registerIpc();
   createBunnyWindow();
   createTray();
+
+  // Talk to Nibo from anywhere.
+  try {
+    hotkeyReady = globalShortcut.register(VOICE_HOTKEY, () => {
+      showNibo();
+      send('nibo:command', 'toggle-voice');
+    });
+  } catch (err) {
+    console.error('[nibo] could not register the voice hotkey:', err.message);
+  }
 
   // Feed the cursor position to the renderer so Nibo's eyes can follow it
   // and hover works even while the window is click-through.
@@ -721,6 +840,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showNibo);
   app.whenReady().then(init);
   app.on('window-all-closed', () => app.quit());
+  app.on('will-quit', () => globalShortcut.unregisterAll());
   app.on('before-quit', () => {
     for (const controller of inflight.values()) controller.abort();
     if (store) {
