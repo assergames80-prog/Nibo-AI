@@ -2,18 +2,19 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-const EVENTS = new Set(['nibo:delta', 'nibo:search-status', 'nibo:state', 'nibo:cursor', 'nibo:hop', 'nibo:command']);
+const EVENTS = new Set(['nibo:delta', 'nibo:search-status', 'nibo:state', 'nibo:cursor', 'nibo:hop', 'nibo:command', 'nibo:reminder']);
 
 contextBridge.exposeInMainWorld('nibo', {
   getState: () => ipcRenderer.invoke('nibo:get-state'),
   getLines: () => ipcRenderer.invoke('nibo:get-lines'),
-  ask: (id, text, opts = {}) => ipcRenderer.invoke('nibo:ask', { id, text, search: Boolean(opts.search) }),
+  ask: (id, text, opts = {}) => ipcRenderer.invoke('nibo:ask', { id, text, search: Boolean(opts.search), remind: Boolean(opts.remind) }),
   transcribe: (wav) => ipcRenderer.invoke('nibo:transcribe', wav instanceof Uint8Array ? wav : new Uint8Array(wav)),
   micAccess: () => ipcRenderer.invoke('nibo:mic-access'),
   tts: (text) => ipcRenderer.invoke('nibo:tts', String(text)),
   cancel: (id) => ipcRenderer.send('nibo:cancel', id),
   preset: (name, arg) => ipcRenderer.invoke('nibo:preset', { name, arg }),
   openApp: (name) => ipcRenderer.invoke('nibo:open-app', String(name)),
+  reminders: (action, arg) => ipcRenderer.invoke('nibo:reminders', { action: String(action), arg }),
   organize: (target) => ipcRenderer.invoke('nibo:organize', String(target)),
   organizeUndo: () => ipcRenderer.invoke('nibo:organize-undo'),
   openOrganized: () => ipcRenderer.send('nibo:open-organized'),

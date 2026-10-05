@@ -175,6 +175,9 @@
       <!-- shown while Nibo is listening and the prompt bar is hidden -->
       <button id="voice-badge" class="hit" type="button" title="Nibo is listening. Click to stop.">👂</button>
 
+      <!-- the soonest running timer: click for all reminders -->
+      <button id="timer-badge" class="hit" type="button" hidden>⏱️ <span id="timer-badge-text"></span></button>
+
       <!-- tummy & happiness -->
       <div id="stats" class="hit ui" title="Nibo's tummy and happiness">
         <span class="stat"><span class="stat-icon">🥕</span><span class="meter"><span id="meter-food"></span></span></span>
@@ -205,6 +208,7 @@
         <button type="button" role="menuitem" data-preset="organize">🗂️ Organize my files</button>
         <button type="button" role="menuitem" data-preset="undo-organize" id="undo-tidy-btn" hidden>↩️ Undo tidy-up</button>
         <button type="button" role="menuitem" data-preset="open-app">🚀 Open an app…</button>
+        <button type="button" role="menuitem" data-preset="remind">⏰ Reminders &amp; timers…</button>
         <button type="button" role="menuitem" data-preset="joke">😂 Tell me a joke</button>
         <button type="button" role="menuitem" data-preset="search">🔎 Search the web for…</button>
         <button type="button" role="menuitem" data-preset="fact">💡 Fun fact, please!</button>

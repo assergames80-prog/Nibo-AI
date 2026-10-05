@@ -12,13 +12,17 @@ const { startMockGroq } = require('../test/mock-groq');
 const { startMockTavily } = require('../test/mock-tavily');
 
 const OUT = path.resolve(process.argv.find((a) => a.startsWith('--out='))?.slice(6) || 'screenshots');
-const MONTAGE = path.join(__dirname, '..', 'docs', 'screenshot.png');
+const DOCS = path.join(__dirname, '..', 'docs');
 const MONTAGE_SCENES = [
   ['greeting', 'Floats on your desktop'],
   ['menu', 'Right-click for silly presets'],
   ['answer', 'Ask him anything (Groq)'],
   ['search', 'Searches the web 🔎'],
   ['feed-happy', 'Feed him carrots 🥕'],
+];
+const REMINDER_SCENES = [
+  ['reminder-timer', 'Set a timer ⏱️'],
+  ['reminder-alert', 'He tells you when it’s time ⏰'],
 ];
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'nibo-shots-'));
 app.setPath('userData', profile);
@@ -96,7 +100,8 @@ async function main() {
   }
 
   await tidyPopup(win);
-  await montage(win);
+  await montage(MONTAGE_SCENES, path.join(DOCS, 'screenshot.png'));
+  await reminderScenes(win);
   await mock.close();
   await tavily.close();
   app.exit(0);
@@ -117,20 +122,38 @@ async function tidyPopup(win) {
   await sleep(500);
 }
 
+// A running timer with its countdown, and a reminder going off.
+async function reminderScenes(win) {
+  const ask = (text) =>
+    win.webContents.executeJavaScript(`{ const i = document.getElementById('ask'); i.value = ${JSON.stringify(text)}; document.getElementById('prompt').requestSubmit(); }`);
+  const capture = async (name) => {
+    fs.writeFileSync(path.join(OUT, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+    console.log(`saved ${name}.png`);
+  };
+  await win.webContents.executeJavaScript(`window.NiboBubble.hide(); document.body.classList.add('show-ui');`);
+  await ask('set a timer for 5 minutes');
+  await sleep(1400);
+  await capture('reminder-timer');
+  await ask('remind me to stretch in 2 seconds');
+  await sleep(4200);
+  await capture('reminder-alert');
+  await montage(REMINDER_SCENES, path.join(DOCS, 'reminders.png'));
+}
+
 // Put a few scenes side by side on a pastel "desktop" for the README.
-async function montage(win) {
+async function montage(scenes, file) {
   const font = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'fonts', 'PatrickHand.woff2')).toString('base64');
-  const tiles = MONTAGE_SCENES.map(([name, caption]) => {
+  const tiles = scenes.map(([name, caption]) => {
     const png = fs.readFileSync(path.join(OUT, `${name}.png`)).toString('base64');
     return `<figure><div class="shot" style="background-image:url(data:image/png;base64,${png})"></div><figcaption>${caption}</figcaption></figure>`;
   }).join('');
   const zoom = 0.8; // keep the montage narrower than the (virtual) screen
-  const width = Math.round(MONTAGE_SCENES.length * 370 * zoom);
+  const width = Math.round(scenes.length * 370 * zoom);
   const height = Math.round(640 * zoom);
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     @font-face { font-family: PH; src: url(data:font/woff2;base64,${font}); }
     html { zoom: ${zoom}; overflow: hidden; }
-    body { margin: 0; width: ${MONTAGE_SCENES.length * 370}px; height: 640px; display: flex; justify-content: center; gap: 4px;
+    body { margin: 0; width: ${scenes.length * 370}px; height: 640px; display: flex; justify-content: center; gap: 4px;
       background: linear-gradient(160deg, #b9e3ff 0%, #e9dcff 50%, #ffd9ea 100%); font-family: PH, cursive; }
     figure { margin: 0; display: flex; flex-direction: column; align-items: center; }
     .shot { width: 360px; height: 565px; background-position: 0 -55px; background-repeat: no-repeat; }
@@ -140,10 +163,10 @@ async function montage(win) {
   await shot.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`);
   await sleep(500);
   const image = await shot.webContents.capturePage();
-  fs.mkdirSync(path.dirname(MONTAGE), { recursive: true });
-  fs.writeFileSync(MONTAGE, image.toPNG());
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, image.toPNG());
   shot.destroy();
-  console.log('saved docs/screenshot.png');
+  console.log(`saved docs/${path.basename(file)}`);
 }
 
 main().catch((err) => {

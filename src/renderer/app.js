@@ -653,7 +653,7 @@
 
     let res;
     try {
-      res = await nibo.ask(id, text, { search: opts.search });
+      res = await nibo.ask(id, text, { search: opts.search, remind: opts.remind });
     } catch {
       res = { ok: false, error: 'Oops, my ears got tangled. Try again? 🐰' };
     }
@@ -684,10 +684,11 @@
       bubble.finish(res.text, { actions });
       if (reqSpeaks) flushSpeech();
     } else {
-      bubble.say(res.text, { actions });
+      bubble.say(res.text, { actions, sticky: res.sticky });
       if (reqSpeaks) speak(res.text);
       else talkFor(clamp(res.text.length * 35, 600, 2600));
     }
+    if (res.reminder) express({ eyes: 'happy', mouth: 'smile' }, 1400);
     if (res.opened && res.opened.length) celebrateOpen();
     else if (res.searched) {
       playPose('jump', 560);
@@ -875,6 +876,10 @@
   const PROMPT_MODES = {
     search: { placeholder: 'Search the web for…', line: 'What should I sniff out on the web? 🔎 Type it below!' },
     app: { placeholder: 'Type an app name…', line: 'Which app should I open? 🚀 Type its name!' },
+    remind: {
+      placeholder: 'e.g. call mum in 20 minutes',
+      line: 'What should I remind you about, and when? ⏰ Like “stretch in 20 minutes”. Or just type a timer, like “5 minutes”.',
+    },
   };
 
   function enterPromptMode(mode, actions = []) {
@@ -995,6 +1000,142 @@
     say(res.text, { actions: res.actions });
     if (res.opened && res.opened.length) celebrateOpen();
   }
+
+  // ---------- reminders and timers ----------
+
+  const timerBadge = $('timer-badge');
+  const timerText = $('timer-badge-text');
+  let alertIds = null; // the reminders the bubble is announcing, until they're answered
+  let alertNext = null;
+  let alertWaiting = false;
+
+  function chooseReminder() {
+    touch();
+    if (face.sleeping) wake(false);
+    const count = ((state && state.reminders) || []).length;
+    enterPromptMode('remind', count ? [{ label: `📋 My reminders (${count})`, action: 'reminders-list' }] : []);
+  }
+
+  // Say what a button or menu action on the reminders returned.
+  async function remindersAction(action, arg) {
+    touch();
+    let res;
+    try {
+      res = await nibo.reminders(action, arg);
+    } catch {
+      res = null;
+    }
+    if (!res || !res.ok) return say('Oops, my notebook slipped out of my paws. Try again? 🐰');
+    if (res.text) say(res.text, { actions: res.actions, sticky: Boolean(res.actions && res.actions.length) });
+    return res;
+  }
+
+  // A soft "ding" (three beeps for a timer) for when Nibo isn't speaking up.
+  function chime(beeps = 2) {
+    try {
+      const ctx = ensurePlayer();
+      const first = ctx.currentTime + 0.03;
+      const notes = beeps === 3 ? [880, 880, 880] : [988, 1319];
+      notes.forEach((hz, i) => {
+        const start = first + i * (beeps === 3 ? 0.3 : 0.24);
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = hz;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.55);
+      });
+    } catch {
+      // no sound: the bubble is still there
+    }
+  }
+
+  // Something is due. Don't cut off an answer in progress; then hop over and say so.
+  nibo.on('nibo:reminder', (alert) => {
+    alertNext = alert; // the latest one lists everything that's still waiting
+    if (!alertWaiting) deliverAlert();
+  });
+
+  async function deliverAlert() {
+    alertWaiting = true;
+    for (let i = 0; i < 60 && (currentReq || feeding); i++) await sleep(500);
+    alertWaiting = false;
+    const alert = alertNext;
+    alertNext = null;
+    if (!alert || !alert.items.length) return;
+
+    touch();
+    if (face.sleeping) wake(false);
+    exitPromptMode();
+    stopSpeaking();
+    alertIds = alert.items.map((item) => item.id);
+    bubble.say(alert.text, {
+      sticky: true,
+      actions: [
+        { label: '💤 5 more minutes', action: 'reminder-snooze' },
+        { label: '✅ Done', action: 'reminder-done' },
+      ],
+    });
+    playPose('jump', 560);
+    express({ eyes: 'wide', mouth: 'smile' }, 1800);
+    twitch();
+    sparkles(5);
+    if (voiceOut()) speak(alert.speech);
+    else {
+      chime(alert.items.every((item) => item.kind === 'timer') ? 3 : 2);
+      talkFor(1600);
+    }
+  }
+
+  // Closing the bubble (×, Esc) counts as "got it".
+  bubble.onHide(() => {
+    if (!alertIds) return;
+    nibo.reminders('seen', alertIds);
+    alertIds = null;
+  });
+
+  function snoozeAlert() {
+    const ids = alertIds || [];
+    alertIds = null;
+    stopSpeaking();
+    return remindersAction('snooze', ids);
+  }
+
+  function finishAlert() {
+    const ids = alertIds || [];
+    alertIds = null;
+    stopSpeaking();
+    nibo.reminders('done', ids);
+    bubble.hide();
+  }
+
+  // The countdown pill by Nibo: the soonest running timer.
+  function clockText(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = String(s % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+  }
+
+  function updateTimerBadge() {
+    const timers = ((state && state.reminders) || []).filter((r) => r.kind === 'timer').sort((a, b) => a.due - b.due);
+    if (!timers.length) {
+      if (!timerBadge.hidden) timerBadge.hidden = true;
+      return;
+    }
+    timerBadge.hidden = false;
+    timerText.textContent = clockText(timers[0].due - Date.now()) + (timers.length > 1 ? ` +${timers.length - 1}` : '');
+    timerBadge.title = `${timers.map((t) => `${t.text || 'Timer'}: ${clockText(t.due - Date.now())}`).join('\n')}\nClick to see all reminders`;
+  }
+
+  setInterval(updateTimerBadge, 1000);
+  timerBadge.addEventListener('click', () => remindersAction('list'));
 
   async function feed() {
     if (feeding) return;
@@ -1137,6 +1278,12 @@
         input.value = '';
         return openApp(typed);
       }
+      case 'remind': {
+        const typed = input.value.trim();
+        if (!typed) return chooseReminder();
+        input.value = '';
+        return ask(typed, { remind: true });
+      }
       case 'feed':
         return feed();
       case 'dance':
@@ -1158,11 +1305,18 @@
         await sleep(1400);
         bubble.hide();
         return nibo.hide();
-      case 'quit':
+      case 'quit': {
+        const waiting = ((state && state.reminders) || []).length;
         wave();
-        say('Bye bye! See you soon! 👋🐰', { sticky: true });
-        await sleep(1500);
+        say(
+          waiting
+            ? "Bye bye! 👋🐰 I can only ring while I'm awake, so I'll tell you about anything I missed when I'm back."
+            : 'Bye bye! See you soon! 👋🐰',
+          { sticky: true },
+        );
+        await sleep(waiting ? 3200 : 1500);
         return nibo.quit();
+      }
       default:
         return undefined;
     }
@@ -1179,6 +1333,12 @@
     else if (action.action === 'open-url') nibo.openExternal(action.arg);
     else if (action.action === 'browser-search') browserSearch(action.arg);
     else if (action.action === 'open-app') openApp(action.arg);
+    else if (action.action === 'ask') ask(action.arg);
+    else if (action.action === 'reminder-snooze') snoozeAlert();
+    else if (action.action === 'reminder-done') finishAlert();
+    else if (action.action === 'reminder-cancel') remindersAction('cancel', action.arg);
+    else if (action.action === 'reminder-cancel-all') remindersAction('cancel-all');
+    else if (action.action === 'reminders-list') remindersAction('list');
   });
 
   // ---------- hover, click-through, menu ----------
@@ -1345,7 +1505,10 @@
     input.value = '';
     if (promptMode === 'search') doSearch(text);
     else if (promptMode === 'app') openApp(text);
-    else ask(text);
+    else if (promptMode === 'remind') {
+      exitPromptMode();
+      ask(text, { remind: true });
+    } else ask(text);
   });
 
   input.addEventListener('focus', showUI);
@@ -1381,6 +1544,7 @@
     updateMeters();
     voiceBtn.textContent = state.settings.voice ? '🔊' : '🔇';
     undoTidyBtn.hidden = !state.canUndoOrganize;
+    updateTimerBadge();
     if (ears) ears.setSensitivity(state.settings.micSensitivity);
     if (!state.clickThrough) ignoring = false;
     renderFace();

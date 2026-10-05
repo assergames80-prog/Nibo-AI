@@ -1,8 +1,8 @@
 # 🐰 Nibo AI
 
 A cute, hand-drawn AI bunny who floats on your desktop, answers your questions at
-[Groq](https://groq.com) speed, searches the web, opens your apps, chats with you out loud, tells silly jokes and *really*
-likes carrots.
+[Groq](https://groq.com) speed, searches the web, opens your apps, sets reminders and timers, chats with you out loud,
+tells silly jokes and *really* likes carrots.
 Inspired by classic desktop buddies like BonziBuddy.
 
 ![Nibo floating on a desktop: greeting, preset menu, answering a question, answering from a web search with source links, and eating a carrot](docs/screenshot.png)
@@ -18,11 +18,14 @@ Inspired by classic desktop buddies like BonziBuddy.
   question needs fresh info (weather, news, prices…) and answers with clickable source links.
 - **Opens your apps.** Say or type *"open Spotify"* and off it goes. He also opens your folders (*"open my
   downloads"*) and popular websites (*"open YouTube"*).
+- **Reminders and timers.** Say or type *"remind me to call mum in 20 minutes"* or *"set a timer for 5 minutes"*.
+  He hops over, tells you out loud when it's time, and shows a countdown while a timer runs.
 - **Talk to him.** Click 🎤 (or press **Ctrl+Alt+Space** anywhere) and just speak. He answers out loud while the reply
   streams in, keeps listening hands-free, and you can **interrupt him by talking over him**.
 - **Silly presets.** Click **Preset ▾** or right-click Nibo:
   - 🗂️ Organize my files (for real, with your approval, see below)
   - 🚀 Open an app…
+  - ⏰ Reminders & timers…
   - 😂 Tell me a joke
   - 🔎 Search the web for…
   - 💡 Fun fact
@@ -106,6 +109,33 @@ his menu, which also shows the apps you opened last.
 - To stay safe, he only opens apps from the Start menu, your folders and websites. He never runs commands or
   programs you type in, and web search results can't make him open anything.
 
+## Reminders and timers
+
+![A timer counting down next to Nibo, and Nibo telling you a reminder is due, with snooze and done buttons](docs/reminders.png)
+
+Just ask, by typing or by voice, or use ⏰ **Reminders & timers…** in his menu:
+
+- *"remind me to call mum in 20 minutes"*, *"remind me at 6pm to stretch"*, *"remind me tomorrow at 9 about the
+  dentist"*, *"remind me on Friday at 5pm to leave early"*, *"remind me on the 15th to pay rent"*
+- *"set a timer for 5 minutes"*, *"10 minute timer for the pasta"*, *"timer 1 hour 30 minutes"*, *"set an alarm for 7am"*
+- If you leave out the time, he asks, and you can answer by typing or talking (*"in 10 minutes"*) or with a button.
+  Without a Groq key he understands the phrases above. With one, you can also say it in your own words,
+  like *"ping me when the pasta's done, it takes 8 minutes"*.
+- Plain times like *"at 6"* mean the next time the clock reads that, and Nibo always tells you the exact time he
+  picked, with a **Cancel it** button, so a wrong guess is easy to fix.
+
+When it's time, Nibo wakes up, hops, says it out loud (or plays a little ding when his voice is off) and shows
+**5 more minutes** and **✅ Done** buttons. If several things go off together, he lists them all. If he's hidden in
+the tray, he hops back out to tell you, because you asked him to. A running timer shows its countdown next to him; click it to see
+everything he's keeping track of.
+
+- *"what reminders do I have?"* lists them, with a ✖️ button on each. *"cancel the timer"*, *"cancel all reminders"*
+  and *"stop the timer"* work too, and so do *"snooze"* and *"remind me again in 10 minutes"*.
+- Reminders are saved, so they survive a restart. Nibo can only ring while he's running (hiding him in the tray is
+  fine, and **Start Nibo when I log in** in Settings helps), and anything that came due while he was away is
+  announced when he's back.
+- They're one-time only for now, so *"every day at 9"* isn't supported yet. He can keep up to 50 at once.
+
 ## Organize my files
 
 Right-click Nibo → 🗂️ **Organize my files** (or just tell him *"organize my desktop"* or *"tidy up my downloads"*),
@@ -136,6 +166,7 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 | Drag him | Dangles while you carry him, then lands with a squish |
 | Right-click him / **Preset ▾** | Opens the silly menu |
 | Say "open Spotify" | Opens it (apps, folders like Downloads, websites like YouTube) |
+| Say "remind me to … in 20 minutes" | Reminds you, out loud, when it's time (or "set a timer for 5 minutes") |
 | Say "organize my desktop" | Plans a tidy-up and asks for your approval |
 | 🥕 button | Carrot time! |
 | Tray icon | Show / hide Nibo, feed him, settings, quit |
@@ -147,6 +178,8 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 - Web searches send just the search query to Tavily. Results are used only to answer you.
 - The microphone is only on while voice chat is on, as shown by the pink 🎤 and the 👂 badge. Only the bits where
   Nibo detects speech are sent to Groq for transcription. Audio is never saved.
+- **Reminders and timers** are kept on your computer, in `%APPDATA%\Nibo AI\reminders.json`. Nibo understands the usual
+  phrases himself. Only if you word a request in a way he needs the AI for, that message goes to Groq like any chat.
 - **Opening apps** happens on your computer. Your list of apps is never sent anywhere.
 - **Organize my files** runs entirely on your computer: file names are never sent to Groq or anywhere else.
   Files only move after you approve the plan, and the last tidy-up is remembered (in `%APPDATA%\Nibo AI\`) so
@@ -184,6 +217,8 @@ src/main/       Electron main process
   brain.js      Groq chat (streaming, web_search tool, model fallback) + Whisper speech-to-text
   websearch.js  Tavily web search
   apps.js       opening apps: the Start menu list, name matching, launching
+  when.js       understanding times: "in 20 minutes", "tomorrow at 9", "on the 15th"
+  reminders.js  reminders and timers: what you asked for, and the saved notebook
   offline.js    the offline bunny brain, web search URLs, chat intents
   organizer.js  file tidying: plan, apply, undo
   pet.js        tummy & happiness

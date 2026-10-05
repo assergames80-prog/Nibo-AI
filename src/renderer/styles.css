@@ -834,6 +834,31 @@ body.search-mode #prompt {
 body.app-mode #prompt {
   background: #f1fff3;
 }
+body.remind-mode #prompt {
+  background: #fff6e0;
+}
+
+#timer-badge {
+  position: absolute;
+  z-index: 6;
+  right: 12px;
+  top: 458px;
+  height: 30px;
+  padding: 0 11px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  background: #fff3c9;
+  border: 2.5px solid var(--ink);
+  border-radius: 14px 12px 15px 12px;
+  box-shadow: 2px 3px 0 rgba(59, 44, 90, 0.25);
+  cursor: pointer;
+}
+#timer-badge[hidden] {
+  display: none;
+}
+#timer-badge:hover {
+  background: #ffe7c6;
+}
 
 #prompt button {
   height: 32px;

@@ -60,7 +60,28 @@ const OPEN_APP_TOOL = {
     },
   },
 };
-const MAX_OPENS = 3;
+
+const SET_REMINDER_TOOL = {
+  type: 'function',
+  function: {
+    name: 'set_reminder',
+    description:
+      "Set a one-time reminder or a countdown timer that goes off later. Only use it when the user asks to be reminded, or asks for a timer or alarm, and says when or for how long. It can't repeat.",
+    parameters: {
+      type: 'object',
+      properties: {
+        what: { type: 'string', description: 'What to remind the user about, e.g. "call mum". Leave empty for a plain timer.' },
+        when: {
+          type: 'string',
+          description: 'When, in simple words: "in 20 minutes", "in an hour and a half", "at 6pm", "tomorrow at 9am", "friday at 5pm", "in 2 days".',
+        },
+        timer: { type: 'boolean', description: 'true for a countdown timer ("set a timer for 5 minutes").' },
+      },
+      required: ['when'],
+    },
+  },
+};
+const MAX_ACTIONS = 3; // per kind of tool, per message
 
 const SYSTEM_PROMPT = `You are Nibo, a tiny, cute, lavender-colored bunny who floats on the user's computer desktop as their AI assistant, in the spirit of classic desktop buddies.
 
@@ -83,15 +104,20 @@ const LIVE_INFO = {
 };
 
 const ABILITIES = {
-  apps: 'You can open apps installed on the computer, the user\'s folders and popular websites with the open_app tool, but only when the user asks you to open, launch or start something; then confirm in a few words. Never say you opened something unless open_app said it worked. You cannot click, type into other apps, or change files.',
+  apps: "open apps installed on the computer, the user's folders and popular websites with the open_app tool, but only when the user asks you to open, launch or start something",
+  reminders:
+    'set one-time reminders and timers with the set_reminder tool, but only when the user asks for one and says when or for how long (you cannot repeat them)',
   none: 'In chat you cannot click, open apps, browse, or change files, so never claim you did.',
 };
 
-function systemPrompt(mode = 'none', { apps = false } = {}) {
-  return SYSTEM_PROMPT.replace('{{LIVE_INFO}}', LIVE_INFO[mode] || LIVE_INFO.none).replace(
-    '{{ABILITIES}}',
-    apps ? ABILITIES.apps : ABILITIES.none,
-  );
+function abilitiesText({ apps = false, reminders = false } = {}) {
+  const can = [apps && ABILITIES.apps, reminders && ABILITIES.reminders].filter(Boolean);
+  if (!can.length) return ABILITIES.none;
+  return `You can ${can.join(', and you can ')}. After using a tool, confirm in a few words, and never say you did something unless the tool said it worked. You cannot click, type into other apps, or change files.`;
+}
+
+function systemPrompt(mode = 'none', abilities = {}) {
+  return SYSTEM_PROMPT.replace('{{LIVE_INFO}}', LIVE_INFO[mode] || LIVE_INFO.none).replace('{{ABILITIES}}', abilitiesText(abilities));
 }
 
 function reasoningParams(model) {
@@ -173,8 +199,8 @@ class Brain {
     while (this.history.length > MAX_HISTORY) this.history.splice(0, 2);
   }
 
-  buildMessages(text, status, { mode = 'none', context, apps = false } = {}) {
-    const messages = [{ role: 'system', content: systemPrompt(mode, { apps }) }, ...this.history];
+  buildMessages(text, status, { mode = 'none', context, apps = false, reminders = false } = {}) {
+    const messages = [{ role: 'system', content: systemPrompt(mode, { apps, reminders }) }, ...this.history];
     if (status) {
       const tummy = Math.round(status.fullness ?? 70);
       messages.push({
@@ -229,22 +255,25 @@ class Brain {
    *
    * opts.search(query, signal) -> { text, sources }   lets the model search the web
    * opts.openApp(name) -> { text, opened?: [names] }   lets the model open apps
+   * opts.setReminder({ what, when, timer }) -> { text }  lets the model set reminders and timers
    * opts.context                                       search results to answer from
    * opts.onEvent({ type: 'searching', query })         progress for the UI
    */
-  async ask(text, { status, onDelta, onEvent, signal, search, openApp, context } = {}) {
+  async ask(text, { status, onDelta, onEvent, signal, search, openApp, setReminder, context } = {}) {
     const apiKey = this.getApiKey();
     if (!apiKey) return { ok: false, error: 'no-key' };
 
     const client = this.createClient(apiKey);
     const mode = context ? 'context' : search ? 'search' : 'none';
-    // Web text must never get to open apps, so no open_app next to search results.
+    // Web text must never get to open apps or set reminders, so those tools
+    // aren't offered next to search results.
     const canOpen = Boolean(openApp) && mode !== 'context';
-    const convo = this.buildMessages(text, status, { mode, context, apps: canOpen });
+    const canRemind = Boolean(setReminder) && mode !== 'context';
+    const convo = this.buildMessages(text, status, { mode, context, apps: canOpen, reminders: canRemind });
     let model = this.getModel() || DEFAULT_MODEL;
     let extras = reasoningParams(model);
-    let useTools = mode === 'search' || canOpen;
-    const state = { searched: false, opens: 0, opened: [] };
+    let useTools = mode === 'search' || canOpen || canRemind;
+    const state = { searched: false, opens: 0, reminders: 0, opened: [] };
     const sources = [];
     let rounds = 0;
     let failures = 0;
@@ -260,6 +289,7 @@ class Brain {
       const tools = [];
       if (useTools && mode === 'search') tools.push(WEB_SEARCH_TOOL);
       if (useTools && canOpen && !state.searched) tools.push(OPEN_APP_TOOL);
+      if (useTools && canRemind && !state.searched) tools.push(SET_REMINDER_TOOL);
       if (tools.length) {
         params.tools = tools;
         params.tool_choice = rounds < MAX_TOOL_ROUNDS ? 'auto' : 'none';
@@ -306,7 +336,7 @@ class Brain {
         });
         const offered = new Set(tools.map((t) => t.function.name));
         for (const call of calls) {
-          const content = await this.runTool(call, { offered, search, openApp, onEvent, signal, sources, state });
+          const content = await this.runTool(call, { offered, search, openApp, setReminder, onEvent, signal, sources, state });
           convo.push({ role: 'tool', tool_call_id: call.id, content });
           if (signal?.aborted) return aborted;
         }
@@ -323,7 +353,7 @@ class Brain {
     }
   }
 
-  async runTool(call, { offered, search, openApp, onEvent, signal, sources, state }) {
+  async runTool(call, { offered, search, openApp, setReminder, onEvent, signal, sources, state }) {
     let args = {};
     try {
       args = JSON.parse(call.arguments || '{}') || {};
@@ -332,6 +362,7 @@ class Brain {
     }
     if (!offered.has(call.name)) return `Error: the ${call.name} tool is not available right now.`;
     if (call.name === 'open_app') return this.runOpenApp(args.name, { openApp, state });
+    if (call.name === 'set_reminder') return this.runSetReminder(args, { setReminder, state });
     let query = args.query;
     if (typeof query !== 'string' || !query.trim()) return 'Error: call web_search with a "query" string.';
     state.searched = true;
@@ -349,7 +380,7 @@ class Brain {
 
   async runOpenApp(name, { openApp, state }) {
     if (typeof name !== 'string' || !name.trim()) return 'Error: call open_app with a "name" string.';
-    if (state.opens >= MAX_OPENS) return 'Nothing was opened: that is enough apps for one message.';
+    if (state.opens >= MAX_ACTIONS) return 'Nothing was opened: that is enough apps for one message.';
     state.opens++;
     try {
       const res = await openApp(name.trim().slice(0, 100));
@@ -357,6 +388,20 @@ class Brain {
       return res.text;
     } catch (err) {
       return `Opening failed (${err.message}). Tell the user it didn't work.`;
+    }
+  }
+
+  async runSetReminder(args, { setReminder, state }) {
+    const when = typeof args.when === 'string' ? args.when.trim().slice(0, 100) : '';
+    if (!when) return 'Error: call set_reminder with a "when" string, like "in 20 minutes" or "tomorrow at 9am".';
+    if (state.reminders >= MAX_ACTIONS) return 'Nothing was set: that is enough reminders for one message.';
+    state.reminders++;
+    try {
+      const what = typeof args.what === 'string' ? args.what.trim().slice(0, 200) : '';
+      const res = await setReminder({ what, when, timer: args.timer === true });
+      return res.text;
+    } catch (err) {
+      return `Setting it failed (${err.message}). Tell the user it didn't work.`;
     }
   }
 
@@ -420,6 +465,7 @@ module.exports = {
   SYSTEM_PROMPT,
   TRANSCRIBE_PROMPT,
   OPEN_APP_TOOL,
+  SET_REMINDER_TOOL,
   WEB_SEARCH_TOOL,
   choosePreferred,
   errorKind,
