@@ -24,6 +24,7 @@ const REMINDER_SCENES = [
   ['reminder-timer', 'Set a timer ⏱️'],
   ['reminder-alert', 'He tells you when it’s time ⏰'],
 ];
+process.env.NIBO_NO_UPDATE_CHECK = '1'; // no 🎁 button in the pictures
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'nibo-shots-'));
 app.setPath('userData', profile);
 

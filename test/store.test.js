@@ -101,3 +101,20 @@ test('keeps a short, clean list of recent apps', () => {
   fs.writeFileSync(file, JSON.stringify({ recentApps: 'Spotify' }));
   assert.deepEqual(new Store(file, fakeCipher).get('recentApps'), []);
 });
+
+test('remembers which update was announced or hidden, and repairs junk', () => {
+  const file = tmpFile();
+  const store = new Store(file, fakeCipher);
+  assert.equal(store.get('checkUpdates'), true);
+  assert.equal(store.get('lastAnnouncedUpdate'), '');
+  store.set({ lastAnnouncedUpdate: '1.5.0', dismissedUpdate: '1.5.0', checkUpdates: false });
+  const again = new Store(file, fakeCipher);
+  assert.equal(again.get('lastAnnouncedUpdate'), '1.5.0');
+  assert.equal(again.get('dismissedUpdate'), '1.5.0');
+  assert.equal(again.get('checkUpdates'), false);
+
+  fs.writeFileSync(file, JSON.stringify({ lastAnnouncedUpdate: 5, dismissedUpdate: 'x'.repeat(100) }));
+  const repaired = new Store(file, fakeCipher);
+  assert.equal(repaired.get('lastAnnouncedUpdate'), '');
+  assert.equal(repaired.get('dismissedUpdate'), '');
+});

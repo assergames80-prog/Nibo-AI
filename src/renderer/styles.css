@@ -838,6 +838,46 @@ body.remind-mode #prompt {
   background: #fff6e0;
 }
 
+#update-btn {
+  position: absolute;
+  z-index: 6;
+  left: 10px;
+  top: 424px;
+  height: 30px;
+  padding: 0 11px;
+  font-size: 15px;
+  background: #d9f7e8;
+  border: 2.5px solid var(--ink);
+  border-radius: 12px 15px 12px 14px;
+  box-shadow: 2px 3px 0 rgba(59, 44, 90, 0.25);
+  cursor: pointer;
+  animation: update-wiggle 2.8s ease-in-out infinite;
+}
+#update-btn[hidden] {
+  display: none;
+}
+#update-btn:hover {
+  background: #c2f0d9;
+}
+@keyframes update-wiggle {
+  0%,
+  86%,
+  100% {
+    transform: rotate(0);
+  }
+  90% {
+    transform: rotate(-5deg);
+  }
+  94% {
+    transform: rotate(5deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #update-btn {
+    animation: none;
+  }
+}
+
 #timer-badge {
   position: absolute;
   z-index: 6;
@@ -907,6 +947,8 @@ body.remind-mode #prompt {
   border: 3px solid var(--ink);
   border-radius: 18px 14px 20px 14px / 14px 20px 14px 18px;
   box-shadow: 4px 5px 0 rgba(59, 44, 90, 0.22);
+  max-height: 530px;
+  overflow-y: auto;
   transition:
     opacity 0.14s ease,
     transform 0.14s ease;

@@ -16,6 +16,9 @@ const DEFAULT_SETTINGS = {
   bargeIn: true,
   micSensitivity: 'normal',
   recentApps: [],
+  checkUpdates: true,
+  lastAnnouncedUpdate: '',
+  dismissedUpdate: '',
   firstRun: true,
   position: null,
   pet: null,
@@ -50,6 +53,9 @@ class Store {
     }
     if (!Object.hasOwn(SEARCH_ENGINES, this.data.searchEngine)) this.data.searchEngine = 'google';
     if (!MIC_SENSITIVITIES.includes(this.data.micSensitivity)) this.data.micSensitivity = 'normal';
+    for (const key of ['lastAnnouncedUpdate', 'dismissedUpdate']) {
+      if (typeof this.data[key] !== 'string' || this.data[key].length > 40) this.data[key] = '';
+    }
     const recent = Array.isArray(this.data.recentApps) ? this.data.recentApps : [];
     this.data.recentApps = recent.filter((n) => typeof n === 'string' && n.trim() && n.length <= 200).slice(0, 6);
   }

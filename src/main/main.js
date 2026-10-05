@@ -29,6 +29,7 @@ const web = require('./websearch');
 const apps = require('./apps');
 const reminders = require('./reminders');
 const when = require('./when');
+const updates = require('./updates');
 const { WindowsVoice } = require('./tts');
 
 const WIN_W = 360;
@@ -66,6 +67,7 @@ const appCatalog = new apps.AppCatalog();
 let book = null; // the reminders and timers (reminders.json)
 let pendingWhen = null; // Nibo just asked "when?" and is waiting for a time
 let fired = []; // reminders that rang lately: { ...item, firedAt, acked, snoozed }
+let update = null; // the newer release GitHub knows about: { version, url, assetUrl }
 
 // ---------- helpers ----------
 
@@ -144,6 +146,8 @@ function snapshot() {
     canUndoOrganize,
     recentApps: store.get('recentApps') || [],
     reminders: book ? book.list().map(({ id, kind, text, due }) => ({ id, kind, text, due })) : [],
+    update: visibleUpdate() ? { version: update.version } : null,
+    appVersion: app.getVersion(),
     platform: process.platform,
     clickThrough: CLICK_THROUGH,
   };
@@ -327,6 +331,21 @@ function askApproval(plan) {
   });
 }
 
+function trayMenu() {
+  const newer = visibleUpdate();
+  return Menu.buildFromTemplate([
+    ...(newer ? [{ label: `🎁 Download Nibo v${newer.version}`, click: () => openUpdate('download') }, { type: 'separator' }] : []),
+    { label: 'Show Nibo', click: showNibo },
+    { label: 'Hide Nibo', click: hideNibo },
+    { label: 'Talk to Nibo 🎤 (Ctrl+Alt+Space)', click: () => (showNibo(), send('nibo:command', 'toggle-voice')) },
+    { type: 'separator' },
+    { label: 'Feed Nibo 🥕', click: () => (showNibo(), send('nibo:command', 'feed')) },
+    { label: 'Settings…', click: openSettings },
+    { type: 'separator' },
+    { label: 'Quit Nibo', click: () => app.quit() },
+  ]);
+}
+
 function createTray() {
   try {
     // tray@2x.png / tray@3x.png are picked up automatically on high-DPI screens.
@@ -336,18 +355,7 @@ function createTray() {
     return;
   }
   tray.setToolTip('Nibo AI');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Show Nibo', click: showNibo },
-      { label: 'Hide Nibo', click: hideNibo },
-      { label: 'Talk to Nibo 🎤 (Ctrl+Alt+Space)', click: () => (showNibo(), send('nibo:command', 'toggle-voice')) },
-      { type: 'separator' },
-      { label: 'Feed Nibo 🥕', click: () => (showNibo(), send('nibo:command', 'feed')) },
-      { label: 'Settings…', click: openSettings },
-      { type: 'separator' },
-      { label: 'Quit Nibo', click: () => app.quit() },
-    ]),
-  );
+  tray.setContextMenu(trayMenu());
   tray.on('click', () => {
     if (!win) return;
     if (win.isVisible()) hideNibo();
@@ -836,6 +844,93 @@ function reminderTool(actions, flags) {
   };
 }
 
+// ---------- updates ----------
+
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
+const IS_PORTABLE = Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
+
+// The newer release, unless the user turned the checks off or hid this one.
+function visibleUpdate() {
+  if (!update || !store || store.get('checkUpdates') === false) return null;
+  return store.get('dismissedUpdate') === update.version ? null : update;
+}
+
+function updateChips() {
+  return [
+    { label: '⬇️ Download', action: 'update-download' },
+    { label: "📝 What's new", action: 'update-notes' },
+    { label: '🙈 Hide this', action: 'update-dismiss' },
+  ];
+}
+
+function updateChanged() {
+  broadcastState();
+  if (tray) tray.setContextMenu(trayMenu());
+}
+
+// Asks GitHub. `manual` checks (the user asked) ignore the settings and the "hide this".
+async function checkForUpdates({ manual = false } = {}) {
+  if (!manual && (store.get('checkUpdates') === false || process.env.NIBO_NO_UPDATE_CHECK)) return null;
+  const res = await updates.checkForUpdate({
+    current: app.getVersion(),
+    portable: IS_PORTABLE,
+    platform: process.platform,
+    baseUrl: process.env.UPDATE_API_BASE,
+  });
+  if (res.status === 'error') {
+    console.error('[nibo] update check failed:', res.error);
+    return res;
+  }
+  if (res.status === 'newer') {
+    update = res.release;
+    if (manual) store.set({ dismissedUpdate: '' });
+    // Say so once per version; after that the 🎁 button waits quietly. (Nibo tells us
+    // when he has really said it, so a busy moment just means we try again later.)
+    if (!manual && store.get('lastAnnouncedUpdate') !== update.version && visibleUpdate()) {
+      send('nibo:update', { version: update.version, current: app.getVersion() });
+    }
+  } else {
+    update = null;
+  }
+  updateChanged();
+  return res;
+}
+
+const newerReply = () => ({
+  text: `A new version of me is out! 🎁 v${update.version} (I'm v${app.getVersion()}.)`,
+  actions: updateChips(),
+  sticky: true,
+});
+
+// What Nibo says when asked about updates, by chat or by the button.
+async function updateReply() {
+  const res = await checkForUpdates({ manual: true });
+  if (res && res.status === 'newer') return newerReply();
+  if (res && res.status === 'current') return { text: `I'm up to date! 🐰 v${app.getVersion()} is the newest version.` };
+  return { text: "I couldn't reach GitHub to check for updates. 🌐 Try again in a bit?" };
+}
+
+// Opens the download (or the release notes) in the browser; Nibo installs nothing himself.
+async function openUpdate(which) {
+  if (!update) return { text: "I don't know of a newer version right now. 🐰" };
+  const direct = which !== 'notes' && update.assetUrl;
+  const url = direct ? update.assetUrl : update.url;
+  if (!updates.isReleaseUrl(url)) return { text: "Hmm, that address doesn't look right, so I won't open it. 🙈" };
+  try {
+    await shell.openExternal(url);
+  } catch (err) {
+    console.error('[nibo] could not open the browser:', err.message);
+    return { text: `Hmm, I couldn't open your web browser. 😿 You can get v${update.version} at github.com/${updates.REPO}/releases` };
+  }
+  if (which === 'notes') return { text: `Here's what's new in v${update.version}! 📝` };
+  if (!update.assetUrl) return { text: `Opening the release page in your browser! 🎁 v${update.version} is waiting there.` };
+  return {
+    text: IS_PORTABLE
+      ? `Downloading v${update.version} in your browser! ⬇️ It's a new portable file: use it instead of this one.`
+      : `Downloading v${update.version} in your browser! ⬇️ Run it when it finishes (it'll ask you to close me first).`,
+  };
+}
+
 // ---------- IPC ----------
 
 function registerIpc() {
@@ -870,6 +965,20 @@ function registerIpc() {
     // "search for X" (or the menu's search) looks it up for real when Tavily is set up.
     const query = payload?.search ? text.slice(0, 400) : offline.detectSearch(text);
     if (query && !hasSearch()) return { ok: true, text: await openSearch(query), searched: true };
+
+    if (!query && !payload?.remind) {
+      const askedAbout = updates.detectIntent(text);
+      if (askedAbout === 'check') return { ok: true, ...(await updateReply()) };
+      if (askedAbout === 'version') {
+        const newer = visibleUpdate();
+        return {
+          ok: true,
+          text: `I'm Nibo AI v${app.getVersion()}! 🐰${newer ? ` A newer one, v${newer.version}, is out though! 🎁` : ''}`,
+          actions: newer ? updateChips() : [],
+          sticky: Boolean(newer),
+        };
+      }
+    }
 
     if (!query) {
       // "remind me to call mum in 20 minutes", "set a timer for 5 minutes", "cancel the timer"…
@@ -940,6 +1049,25 @@ function registerIpc() {
     if (!phrase) return { ok: false };
     const res = await openApps(phrase);
     return { ok: true, text: res.text, opened: res.opened, actions: res.actions };
+  });
+
+  // The 🎁 button: download / notes / dismiss / check.
+  ipcMain.handle('nibo:update', async (e, payload) => {
+    if (!fromBunny(e)) return { ok: false };
+    const action = String(payload?.action ?? '');
+    if (action === 'check') return { ok: true, ...(await updateReply()) };
+    if (action === 'info') return { ok: true, ...(update ? newerReply() : await updateReply()) };
+    if (action === 'announced') {
+      if (update) store.set({ lastAnnouncedUpdate: update.version });
+      return { ok: true };
+    }
+    if (action === 'dismiss') {
+      if (update) store.set({ dismissedUpdate: update.version });
+      updateChanged();
+      return { ok: true, text: "Okay, I'll stay quiet about it! 🤫 Say “check for updates” whenever you like." };
+    }
+    if (action === 'download' || action === 'notes') return { ok: true, ...(await openUpdate(action)) };
+    return { ok: false };
   });
 
   // Buttons and menus: list / cancel / cancel-all / snooze / done.
@@ -1107,6 +1235,7 @@ function registerIpc() {
       searchEngines: Object.keys(offline.SEARCH_ENGINES),
       voice: Boolean(store.get('voice')),
       boil: store.get('boil') !== false,
+      checkUpdates: store.get('checkUpdates') !== false,
       canStartWithSystem: IS_WIN || IS_MAC,
       startWithSystem: IS_WIN || IS_MAC ? app.getLoginItemSettings().openAtLogin : false,
       encrypted: safeStorage.isEncryptionAvailable(),
@@ -1128,6 +1257,7 @@ function registerIpc() {
     if (typeof patch.boil === 'boolean') next.boil = patch.boil;
     if (typeof patch.autoSearch === 'boolean') next.autoSearch = patch.autoSearch;
     if (typeof patch.bargeIn === 'boolean') next.bargeIn = patch.bargeIn;
+    if (typeof patch.checkUpdates === 'boolean') next.checkUpdates = patch.checkUpdates;
     if (MIC_SENSITIVITIES.includes(patch.micSensitivity)) next.micSensitivity = patch.micSensitivity;
     store.set(next);
 
@@ -1135,7 +1265,8 @@ function registerIpc() {
       app.setLoginItemSettings({ openAtLogin: patch.startWithSystem });
     }
     if (next.model) brain.reset();
-    broadcastState();
+    if (next.checkUpdates) checkForUpdates();
+    updateChanged();
     return { ok: true };
   });
 
@@ -1199,6 +1330,10 @@ function init() {
   if (windowsVoice.available()) windowsVoice.start().catch(() => broadcastState());
   // Get the list of apps ready (after the voice helper) so "open …" is quick.
   setTimeout(() => appCatalog.warm(), 5000).unref();
+
+  // Is there a newer Nibo? Look shortly after start-up, then now and then.
+  setTimeout(() => checkForUpdates(), process.env.UPDATE_API_BASE ? 1500 : 20_000).unref();
+  setInterval(() => checkForUpdates(), UPDATE_EVERY_MS).unref();
 
   // Reminders: check every second (dates are compared, not counted, so a sleeping
   // computer rings straight away when it wakes up). Whatever came due while Nibo

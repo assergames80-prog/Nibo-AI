@@ -44,6 +44,7 @@ Inspired by classic desktop buddies like BonziBuddy.
 - **Works offline too.** Without an API key, his little bunny brain still handles greetings, jokes, fun facts,
   math, the time and date, and offers to search the web for everything else.
 - **Lives in the tray.** You can hide him, bring him back, and have him start when you log in.
+- **Tells you about updates.** When a newer version is out, a 🎁 button appears next to him.
 
 ## Download for Windows
 
@@ -55,6 +56,18 @@ Inspired by classic desktop buddies like BonziBuddy.
    Builds of every push are also on the [**Actions** tab](https://github.com/assergames80-prog/Nibo-AI/actions/workflows/build.yml)
    as the **Nibo-AI-Windows** artifact.
 2. The executables aren't code-signed yet, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
+
+### Updates
+
+Shortly after he starts, and every few hours after that, Nibo asks GitHub whether a newer release is out. If there is,
+he tells you once, and a **🎁 v1.x.y** button waits next to him (and at the top of his tray menu).
+
+- **⬇️ Download** opens the right file for you in your browser: the installer, or the portable file if that's what you
+  run. Run the installer to update in place (it asks you to close Nibo first), or use the new portable file instead
+  of the old one. Nibo never downloads or installs anything by himself.
+- **📝 What's new** opens the release page. **🙈 Hide this** hides the button until the next version.
+- Say *"check for updates"* to check right now, or *"what version are you?"*.
+- Don't want the checks? Turn off **Tell me when a new version is out** in Settings.
 
 ## Give Nibo a brain (Groq API key)
 
@@ -166,6 +179,7 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 | Drag him | Dangles while you carry him, then lands with a squish |
 | Right-click him / **Preset ▾** | Opens the silly menu |
 | Say "open Spotify" | Opens it (apps, folders like Downloads, websites like YouTube) |
+| Say "check for updates" | Looks for a newer Nibo (a 🎁 button appears when there is one) |
 | Say "remind me to … in 20 minutes" | Reminds you, out loud, when it's time (or "set a timer for 5 minutes") |
 | Say "organize my desktop" | Plans a tidy-up and asks for your approval |
 | 🥕 button | Carrot time! |
@@ -178,6 +192,8 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 - Web searches send just the search query to Tavily. Results are used only to answer you.
 - The microphone is only on while voice chat is on, as shown by the pink 🎤 and the 👂 badge. Only the bits where
   Nibo detects speech are sent to Groq for transcription. Audio is never saved.
+- **Update checks** ask GitHub (api.github.com) for the latest release of Nibo. Nothing about you is sent beyond what
+  any web request includes, like your IP address. You can turn them off in Settings.
 - **Reminders and timers** are kept on your computer, in `%APPDATA%\Nibo AI\reminders.json`. Nibo understands the usual
   phrases himself. Only if you word a request in a way he needs the AI for, that message goes to Groq like any chat.
 - **Opening apps** happens on your computer. Your list of apps is never sent anywhere.
@@ -219,6 +235,7 @@ src/main/       Electron main process
   apps.js       opening apps: the Start menu list, name matching, launching
   when.js       understanding times: "in 20 minutes", "tomorrow at 9", "on the 15th"
   reminders.js  reminders and timers: what you asked for, and the saved notebook
+  updates.js    is there a newer release? (GitHub), version compare, safe release links
   offline.js    the offline bunny brain, web search URLs, chat intents
   organizer.js  file tidying: plan, apply, undo
   pet.js        tummy & happiness

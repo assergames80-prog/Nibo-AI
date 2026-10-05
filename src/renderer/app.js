@@ -1001,6 +1001,53 @@
     if (res.opened && res.opened.length) celebrateOpen();
   }
 
+  // ---------- updates ----------
+
+  const updateBtn = $('update-btn');
+  const updateBtnText = $('update-btn-text');
+
+  // The 🎁 button by Nibo shows while a newer version is out.
+  function showUpdateButton() {
+    const newer = state && state.update;
+    updateBtn.hidden = !newer;
+    if (!newer) return;
+    updateBtnText.textContent = `v${newer.version}`;
+    updateBtn.title = `Nibo v${newer.version} is out! Click for details`;
+  }
+
+  // action: info / check / download / notes / dismiss. opts.quiet: say it, but don't pin the bubble.
+  async function updateAction(action, opts = {}) {
+    touch();
+    let res;
+    try {
+      res = await nibo.update(action);
+    } catch {
+      res = null;
+    }
+    if (!res || !res.ok) return say("Hmm, I couldn't look that up right now. 🐰");
+    if (!res.text) return res;
+    say(res.text, { actions: res.actions, sticky: Boolean(res.sticky) && !opts.quiet, duration: opts.quiet ? 20000 : undefined });
+    if (res.sticky) express({ eyes: 'happy', mouth: 'smile' }, 1400);
+    return res;
+  }
+
+  updateBtn.addEventListener('click', () => updateAction('info'));
+
+  // GitHub just told Nibo about a new version: mention it once, as soon as he's free
+  // (not asleep, not mid-answer, not showing something). If he stays busy for two
+  // minutes the 🎁 button is still there, and he tries again next time.
+  let announcing = false;
+  nibo.on('nibo:update', async () => {
+    if (announcing) return;
+    announcing = true;
+    const busy = () => face.sleeping || currentReq || feeding || alertIds || bubble.isVisible();
+    for (let i = 0; i < 40 && busy(); i++) await sleep(3000);
+    announcing = false;
+    if (busy() || !state || !state.update) return;
+    const res = await updateAction('info', { quiet: true });
+    if (res && res.ok) nibo.update('announced');
+  });
+
   // ---------- reminders and timers ----------
 
   const timerBadge = $('timer-badge');
@@ -1334,6 +1381,9 @@
     else if (action.action === 'browser-search') browserSearch(action.arg);
     else if (action.action === 'open-app') openApp(action.arg);
     else if (action.action === 'ask') ask(action.arg);
+    else if (action.action === 'update-download') updateAction('download');
+    else if (action.action === 'update-notes') updateAction('notes');
+    else if (action.action === 'update-dismiss') updateAction('dismiss');
     else if (action.action === 'reminder-snooze') snoozeAlert();
     else if (action.action === 'reminder-done') finishAlert();
     else if (action.action === 'reminder-cancel') remindersAction('cancel', action.arg);
@@ -1545,6 +1595,7 @@
     voiceBtn.textContent = state.settings.voice ? '🔊' : '🔇';
     undoTidyBtn.hidden = !state.canUndoOrganize;
     updateTimerBadge();
+    showUpdateButton();
     if (ears) ears.setSensitivity(state.settings.micSensitivity);
     if (!state.clickThrough) ignoring = false;
     renderFace();

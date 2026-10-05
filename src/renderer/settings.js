@@ -66,6 +66,7 @@
     $('hotkey-hint').textContent = s.hotkey ? `(or press ${s.hotkey}) ` : '';
     $('voice').checked = s.voice;
     $('boil').checked = s.boil;
+    $('check-updates').checked = s.checkUpdates;
     $('startup-row').hidden = !s.canStartWithSystem;
     $('startup').checked = s.startWithSystem;
     $('version').textContent = `Nibo AI v${s.version}`;
@@ -109,6 +110,7 @@
       boil: $('boil').checked,
       autoSearch: $('auto-search').checked,
       bargeIn: $('barge-in').checked,
+      checkUpdates: $('check-updates').checked,
       micSensitivity: $('mic-sensitivity').value,
     };
     if (keyInput.value.trim()) patch.apiKey = keyInput.value.trim();
