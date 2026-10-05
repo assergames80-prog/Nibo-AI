@@ -11,6 +11,10 @@ on:
         description: 'Publish a GitHub release with this tag (e.g. v1.0.0). Leave empty to just build.'
         required: false
         default: ''
+      release_notes:
+        description: 'Text for the release. Leave empty to use the automatically generated notes.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -62,4 +66,5 @@ jobs:
           name: Nibo AI ${{ inputs.release_tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           files: dist/*.exe
-          generate_release_notes: true
+          body: ${{ inputs.release_notes }}
+          generate_release_notes: ${{ inputs.release_notes == '' }}
