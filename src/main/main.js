@@ -1195,7 +1195,7 @@ async function installUpdate() {
   try {
     progress({ percent: 0 });
     await updater.download({ url: release.assetUrl, to, size: release.size, sha256: release.sha256, onProgress: progress, signal: controller.signal });
-    if (IS_PORTABLE) updater.launchSwap({ target: portableTarget(), fresh: to, waitFor: [process.pid] });
+    if (IS_PORTABLE) await updater.replacePortable({ target: portableTarget(), fresh: to });
     else await updater.launchInstaller(to);
   } catch (err) {
     installing = null;
@@ -1230,7 +1230,8 @@ function cleanUpdateLeftovers() {
   };
   gone(updateFolder());
   const target = portableTarget();
-  if (target) for (const suffix of ['.old', '.new', '.new.part']) gone(`${target}${suffix}`);
+  // (Never the ".old" file if the new one isn't there: that would be the only copy.)
+  if (target && fs.existsSync(target)) for (const suffix of ['.old', '.new', '.new.part']) gone(`${target}${suffix}`);
 }
 
 // ---------- IPC ----------
@@ -1764,10 +1765,23 @@ function init() {
   screen.on('display-metrics-changed', keepOnScreen);
 }
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-} else {
-  app.on('second-instance', showNibo);
+// Nibo is a single-instance app. A copy started by an update (--updated) starts while the old
+// one is still on its way out, so it waits a little for the old one to let go.
+async function takeSingleInstanceLock() {
+  if (app.requestSingleInstanceLock()) return true;
+  if (!process.argv.includes('--updated')) return false;
+  for (let i = 0; i < 60; i++) {
+    await sleep(500);
+    if (app.requestSingleInstanceLock()) return true;
+  }
+  return false;
+}
+
+takeSingleInstanceLock().then((got) => {
+  if (!got) return app.quit();
+  app.on('second-instance', () => {
+    if (installing !== 'handoff') showNibo();
+  });
   app.whenReady().then(init);
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => globalShortcut.unregisterAll());
@@ -1779,4 +1793,4 @@ if (!app.requestSingleInstanceLock()) {
       savePosition();
     }
   });
-}
+});

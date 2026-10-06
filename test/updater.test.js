@@ -8,7 +8,7 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const updater = require('../src/main/updater');
 
 const REPO = 'assergames80-prog/Nibo-AI';
@@ -266,120 +266,152 @@ test('notices when the installer cannot start or stops at once', async () => {
 
 // ---------- the portable file ----------
 
-test('writes a swap script that is careful with names', () => {
-  const script = updater.swapScript({ target: "C:\\Users\\O'Brien\\Nibo AI.exe", fresh: "C:\\Users\\O'Brien\\Nibo AI.exe.new", waitFor: [1234, 'x', -5, 0, 77.5, 99] });
-  assert.match(script, /\$target = 'C:\\Users\\O''Brien\\Nibo AI\.exe'/);
-  assert.match(script, /\$fresh = 'C:\\Users\\O''Brien\\Nibo AI\.exe\.new'/);
-  assert.match(script, /foreach \(\$id in @\(1234, 99\)\)/); // only real process ids
-  assert.match(script, /Start-Process -FilePath \$target -ArgumentList '--updated'/);
-  assert.match(script, /Move-Item -LiteralPath \$old -Destination \$target -Force\s+Start-Process -FilePath \$target\s+exit 3/); // a failed swap puts the old one back and starts it
-  const quiet = updater.swapScript({ target: 'a', fresh: 'b', relaunch: false });
-  assert.doesNotMatch(quiet, /Start-Process/);
-  assert.match(quiet, /@\(\)/);
-  const args = updater.powershellArgs(script);
-  assert.equal(args.at(-2), '-EncodedCommand');
-  assert.equal(Buffer.from(args.at(-1), 'base64').toString('utf16le'), script);
-  assert.ok(args.includes('-NonInteractive') && args.includes('Bypass'));
-});
-
-test('will not swap in a file that is not there', () => {
-  assert.throws(() => updater.launchSwap({ target: 'a', fresh: path.join(tmpDir(), 'missing.exe') }, { spawnImpl: () => assert.fail('no') }), (err) => err.kind === 'install');
+function portableDir(oldText = 'the old version', newText = 'the NEW version') {
   const dir = tmpDir();
-  const fresh = path.join(dir, 'new.exe');
-  fs.writeFileSync(fresh, 'x');
-  const child = fakeChild();
-  const calls = [];
-  assert.equal(updater.launchSwap({ target: path.join(dir, 'old.exe'), fresh }, { spawnImpl: (...a) => (calls.push(a), child) }), child);
-  assert.equal(calls[0][0], 'powershell.exe');
-  assert.deepEqual(calls[0][2], { detached: true, stdio: 'ignore', windowsHide: true });
-  assert.equal(child.unrefed, true);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-const onWindows = { skip: process.platform !== 'win32', timeout: 120_000 };
-
-function runScript(options) {
-  const script = updater.swapScript({ relaunch: false, cleanupSeconds: 0, ...options });
-  return spawnSync('powershell.exe', updater.powershellArgs(script), { encoding: 'utf8', timeout: 100_000 });
+  const target = path.join(dir, 'Nibo AI Portable.exe');
+  const fresh = `${target}.new`;
+  fs.writeFileSync(target, oldText);
+  fs.writeFileSync(fresh, newText);
+  return { dir, target, fresh };
 }
 
-test('the real swap on Windows: the new file takes the old one\'s place', onWindows, () => {
-  const dir = tmpDir();
-  const target = path.join(dir, 'Nibo AI Portable.exe');
-  const fresh = `${target}.new`;
-  fs.writeFileSync(target, 'the old version');
-  fs.writeFileSync(fresh, 'the NEW version');
+test('puts the new portable file in place and keeps the old one aside', () => {
+  const { dir, target, fresh } = portableDir();
   try {
-    const res = runScript({ target, fresh });
-    assert.equal(res.status, 0, `${res.stdout}${res.stderr}`);
+    const swap = updater.swapInPlace({ target, fresh });
     assert.equal(fs.readFileSync(target, 'utf8'), 'the NEW version');
-    assert.deepEqual(fs.readdirSync(dir).sort(), ['Nibo AI Portable.exe'], 'neither .new nor .old is left');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('the real swap on Windows: a stale ".old" from before does not get in the way', onWindows, () => {
-  const dir = tmpDir();
-  const target = path.join(dir, "Nibo's copy.exe"); // (an apostrophe in the name, too)
-  const fresh = `${target}.new`;
-  fs.writeFileSync(target, 'old');
-  fs.writeFileSync(`${target}.old`, 'leftovers');
-  fs.writeFileSync(fresh, 'new');
-  try {
-    assert.equal(runScript({ target, fresh }).status, 0);
-    assert.equal(fs.readFileSync(target, 'utf8'), 'new');
-    assert.deepEqual(fs.readdirSync(dir), ["Nibo's copy.exe"]);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('the real swap on Windows: if the new file cannot be put in place, the old one comes back', onWindows, () => {
-  const dir = tmpDir();
-  const target = path.join(dir, 'Nibo AI Portable.exe');
-  fs.writeFileSync(target, 'the old version');
-  try {
-    const res = runScript({ target, fresh: path.join(dir, 'does-not-exist.exe') });
-    assert.equal(res.status, 3, `${res.stdout}${res.stderr}`);
+    assert.equal(fs.readFileSync(`${target}.old`, 'utf8'), 'the old version');
+    assert.equal(swap.old, `${target}.old`);
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['Nibo AI Portable.exe', 'Nibo AI Portable.exe.old']);
+    swap.undo();
     assert.equal(fs.readFileSync(target, 'utf8'), 'the old version');
-    assert.deepEqual(fs.readdirSync(dir), ['Nibo AI Portable.exe']);
+    assert.equal(fs.readFileSync(fresh, 'utf8'), 'the NEW version');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['Nibo AI Portable.exe', 'Nibo AI Portable.exe.new']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('the real swap on Windows: waits for Nibo to be gone first', onWindows, async () => {
-  const dir = tmpDir();
-  const target = path.join(dir, 'Nibo AI Portable.exe');
-  const fresh = `${target}.new`;
-  fs.writeFileSync(target, 'old');
-  fs.writeFileSync(fresh, 'new');
-  // A process that lives for about three seconds stands in for Nibo.
-  const stand = spawn('powershell.exe', ['-NoProfile', '-Command', 'Start-Sleep -Seconds 3'], { stdio: 'ignore' });
+test('a leftover ".old" from an earlier update does not get in the way', () => {
+  const { dir, target, fresh } = portableDir('old', 'new');
+  fs.writeFileSync(`${target}.old`, 'leftovers');
   try {
-    const begun = Date.now();
-    const res = runScript({ target, fresh, waitFor: [stand.pid] });
-    assert.equal(res.status, 0, `${res.stdout}${res.stderr}`);
-    assert.ok(Date.now() - begun >= 1500, 'should have waited for the other process');
+    updater.swapInPlace({ target, fresh });
     assert.equal(fs.readFileSync(target, 'utf8'), 'new');
+    assert.equal(fs.readFileSync(`${target}.old`, 'utf8'), 'old');
   } finally {
-    stand.kill();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('the real swap on Windows: launchSwap runs on its own', onWindows, async () => {
-  const dir = tmpDir();
-  const target = path.join(dir, 'Nibo AI Portable.exe');
-  const fresh = `${target}.new`;
-  fs.writeFileSync(target, 'old');
-  fs.writeFileSync(fresh, 'new');
+test('will not swap in a file that is not there, or leave things half done', () => {
+  const { dir, target, fresh } = portableDir();
   try {
-    updater.launchSwap({ target, fresh, relaunch: false, cleanupSeconds: 0 });
-    for (let i = 0; i < 60 && fs.readFileSync(target, 'utf8') !== 'new'; i++) await sleep(500);
-    assert.equal(fs.readFileSync(target, 'utf8'), 'new');
+    fs.rmSync(fresh);
+    assert.throws(() => updater.swapInPlace({ target, fresh }), (err) => err.kind === 'install');
+    assert.equal(fs.readFileSync(target, 'utf8'), 'the old version');
+
+    // The new file can't be moved in: the old one comes back.
+    fs.writeFileSync(fresh, 'the NEW version');
+    let renames = 0;
+    const flaky = {
+      ...fs,
+      renameSync: (from, to) => {
+        if (++renames === 2) throw new Error('EBUSY');
+        fs.renameSync(from, to);
+      },
+    };
+    assert.throws(() => updater.swapInPlace({ target, fresh }, flaky), (err) => err.kind === 'install' && /EBUSY/.test(err.message));
+    assert.equal(fs.readFileSync(target, 'utf8'), 'the old version');
+    assert.equal(fs.readFileSync(fresh, 'utf8'), 'the NEW version');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['Nibo AI Portable.exe', 'Nibo AI Portable.exe.new']);
+
+    // The old one can't be moved aside: nothing changes at all.
+    const stuck = {
+      ...fs,
+      renameSync: () => {
+        throw new Error('EPERM');
+      },
+    };
+    assert.throws(() => updater.swapInPlace({ target, fresh }, stuck), (err) => err.kind === 'install' && /EPERM/.test(err.message));
+    assert.equal(fs.readFileSync(target, 'utf8'), 'the old version');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['Nibo AI Portable.exe', 'Nibo AI Portable.exe.new']);
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('starts the new portable file on its own, as an update', async () => {
+  const child = fakeChild();
+  const calls = [];
+  const started = updater.startPortable('C:\\Apps\\Nibo.exe', { spawnImpl: (...args) => (calls.push(args), child) });
+  child.emit('spawn');
+  await started;
+  assert.deepEqual(calls, [['C:\\Apps\\Nibo.exe', ['--updated'], { detached: true, stdio: 'ignore', windowsHide: false }]]);
+  assert.equal(child.unrefed, true);
+
+  const broken = fakeChild();
+  const b = updater.startPortable('x.exe', { spawnImpl: () => broken });
+  broken.emit('error', new Error('EACCES'));
+  await assert.rejects(b, (err) => err.kind === 'install' && /EACCES/.test(err.message));
+  await assert.rejects(
+    updater.startPortable('x.exe', {
+      spawnImpl: () => {
+        throw new Error('nope');
+      },
+    }),
+    (err) => err.kind === 'install',
+  );
+});
+
+test('the portable update puts the old file back if the new one will not start', async () => {
+  const good = portableDir();
+  const bad = portableDir();
+  try {
+    const child = fakeChild();
+    await Promise.all([updater.replacePortable(good, { spawnImpl: () => child }), Promise.resolve().then(() => child.emit('spawn'))]);
+    assert.equal(fs.readFileSync(good.target, 'utf8'), 'the NEW version');
+    assert.ok(fs.existsSync(`${good.target}.old`)); // kept until the new one has been running a while
+
+    const broken = fakeChild();
+    await Promise.all([
+      assert.rejects(updater.replacePortable(bad, { spawnImpl: () => broken }), (err) => err.kind === 'install'),
+      Promise.resolve().then(() => broken.emit('error', new Error('blocked by antivirus'))),
+    ]);
+    assert.equal(fs.readFileSync(bad.target, 'utf8'), 'the old version');
+    assert.equal(fs.readFileSync(bad.fresh, 'utf8'), 'the NEW version');
+    assert.ok(!fs.existsSync(`${bad.target}.old`));
+  } finally {
+    fs.rmSync(good.dir, { recursive: true, force: true });
+    fs.rmSync(bad.dir, { recursive: true, force: true });
+  }
+});
+
+// What only a real Windows can say: a program that is running can still be renamed, which is
+// the whole trick. (A copy of node.exe stands in for the portable Nibo.)
+const onWindows = { skip: process.platform !== 'win32', timeout: 120_000 };
+
+test('the real swap on Windows: the file of a running program can be swapped and the new one started', onWindows, async () => {
+  const dir = tmpDir();
+  const target = path.join(dir, "Nibo's AI Portable.exe");
+  const fresh = `${target}.new`;
+  fs.copyFileSync(process.execPath, target);
+  fs.copyFileSync(process.execPath, fresh);
+  fs.appendFileSync(fresh, Buffer.from('NEW')); // harmless after the end of an .exe, and different from the old one
+  const running = spawn(target, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  await sleep(1500);
+  try {
+    assert.equal(running.exitCode, null, 'the stand-in program is running');
+    await updater.replacePortable({ target, fresh });
+    assert.equal(fs.statSync(target).size, fs.statSync(`${target}.old`).size + 3, 'the new file is where the old one was');
+    assert.equal(running.exitCode, null, 'the old program keeps running after its file moved');
+    running.kill();
+    await new Promise((resolve) => running.once('exit', resolve));
+    await sleep(500);
+    fs.rmSync(`${target}.old`); // ...and once it has quit, the old file can go
+  } finally {
+    running.kill();
+    await sleep(500);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -174,60 +174,79 @@ function launchInstaller(file, { spawnImpl = spawn, graceMs = 2500 } = {}) {
 
 // ---------- portable version: swap the file ----------
 
-const psString = (text) => `'${String(text).replace(/'/g, "''")}'`;
+/**
+ * Puts the new portable file where the old one is, keeping the old one as ".old" until
+ * the new one has started. Windows lets a running program be renamed (just not replaced
+ * or deleted), so Nibo can do this himself while he is still running.
+ * Returns { old, undo() }; undo() puts everything back the way it was.
+ */
+function swapInPlace({ target, fresh }, fsImpl = fs) {
+  const old = `${target}.old`;
+  if (!fsImpl.existsSync(fresh)) throw new UpdateError('the new file is missing', 'install');
+  try {
+    fsImpl.rmSync(old, { force: true }); // a leftover from an earlier update
+  } catch (err) {
+    throw new UpdateError(`couldn't clear the way for the swap: ${err.message}`, 'install');
+  }
+  try {
+    fsImpl.renameSync(target, old);
+  } catch (err) {
+    throw new UpdateError(`couldn't move the old file aside: ${err.message}`, 'install');
+  }
+  try {
+    fsImpl.renameSync(fresh, target);
+  } catch (err) {
+    try {
+      fsImpl.renameSync(old, target); // put the old one back
+    } catch {
+      // (nothing more can be done; the next start-up looks for ".old")
+    }
+    throw new UpdateError(`couldn't put the new file in place: ${err.message}`, 'install');
+  }
+  return {
+    old,
+    undo() {
+      try {
+        fsImpl.renameSync(target, fresh);
+        fsImpl.renameSync(old, target);
+      } catch {
+        // best effort
+      }
+    },
+  };
+}
 
 /**
- * A PowerShell script that waits for Nibo to be gone, puts the new file where the old
- * one was (keeping the old one as ".old" until it worked), and starts it. If anything
- * goes wrong it puts the old file back and starts that instead.
+ * Starts the (new) portable file on its own and resolves once it is running. It is
+ * started with --updated, so it knows to wait for this Nibo to finish quitting.
  */
-function swapScript({ target, fresh, waitFor = [], relaunch = true, cleanupSeconds = 3 }) {
-  const start = relaunch ? `Start-Process -FilePath $target -ArgumentList '--updated'` : '';
-  const startOld = relaunch ? `Start-Process -FilePath $target` : '';
-  return `
-$ErrorActionPreference = 'Stop'
-$target = ${psString(target)}
-$fresh = ${psString(fresh)}
-$old = $target + '.old'
-foreach ($id in @(${waitFor.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0).join(', ')})) {
-  try { Wait-Process -Id $id -Timeout 60 -ErrorAction Stop } catch { }
-}
-$moved = $false
-for ($i = 0; $i -lt 40; $i++) {
-  try {
-    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force }
-    Move-Item -LiteralPath $target -Destination $old -Force
-    $moved = $true
-    break
-  } catch { Start-Sleep -Milliseconds 500 }
-}
-if (-not $moved) { ${startOld}; exit 2 }
-try {
-  Move-Item -LiteralPath $fresh -Destination $target -Force
-} catch {
-  Move-Item -LiteralPath $old -Destination $target -Force
-  ${startOld}
-  exit 3
-}
-${start}
-Start-Sleep -Seconds ${Number(cleanupSeconds) || 0}
-Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
-`.trim();
+function startPortable(file, { spawnImpl = spawn } = {}) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawnImpl(file, ['--updated'], { detached: true, stdio: 'ignore', windowsHide: false });
+    } catch (err) {
+      reject(new UpdateError(`the new Nibo wouldn't start: ${err.message}`, 'install'));
+      return;
+    }
+    child.once('error', (err) => reject(new UpdateError(`the new Nibo wouldn't start: ${err.message}`, 'install')));
+    child.once('spawn', () => {
+      if (child.unref) child.unref();
+      resolve();
+    });
+  });
 }
 
-const encodedCommand = (script) => Buffer.from(script, 'utf16le').toString('base64');
-const powershellArgs = (script) => ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', encodedCommand(script)];
-
-/** Starts the swap script on its own; the caller then quits Nibo. */
-function launchSwap(options, { spawnImpl = spawn } = {}) {
-  if (!fs.existsSync(options.fresh)) throw new UpdateError('the new file is missing', 'install');
+/** The portable update: swap the file, start the new one, and undo the swap if that fails. */
+async function replacePortable({ target, fresh }, { fsImpl = fs, spawnImpl = spawn } = {}) {
+  const swap = swapInPlace({ target, fresh }, fsImpl);
   try {
-    const child = spawnImpl('powershell.exe', powershellArgs(swapScript(options)), { detached: true, stdio: 'ignore', windowsHide: true });
-    if (child.unref) child.unref();
-    return child;
+    await startPortable(target, { spawnImpl });
   } catch (err) {
-    throw new UpdateError(`couldn't start the swap: ${err.message}`, 'install');
+    swap.undo();
+    throw err;
   }
+  return swap;
 }
 
 module.exports = {
@@ -237,8 +256,8 @@ module.exports = {
   hostAllowed,
   installerArgs,
   launchInstaller,
-  launchSwap,
-  powershellArgs,
+  replacePortable,
+  startPortable,
   supported,
-  swapScript,
+  swapInPlace,
 };
