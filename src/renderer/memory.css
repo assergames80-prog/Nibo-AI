@@ -1,0 +1,60 @@
+/* Nibo's notebook window. */
+#notes {
+  margin: 6px 0 8px;
+  padding: 0;
+  list-style: none;
+  max-height: 330px;
+  overflow-y: auto;
+}
+
+#notes li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 4px 5px 10px;
+  border-bottom: 2px dashed rgba(59, 44, 90, 0.2);
+}
+
+#notes li:last-child {
+  border-bottom: none;
+}
+
+#notes .text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#notes .when {
+  flex: none;
+  font-size: 14px;
+  opacity: 0.55;
+}
+
+#notes button {
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  font-size: 16px;
+  background: #fff;
+}
+
+#notes button:hover {
+  background: #ffd9e4;
+}
+
+.empty {
+  margin: 14px 4px;
+  text-align: center;
+  opacity: 0.75;
+}
+
+#add {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+button.danger:hover {
+  background: #ffd9e4;
+}

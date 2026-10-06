@@ -124,12 +124,30 @@ test('does not mistake other talk for a request', () => {
   assert.equal(detect(`remind me ${'to do things '.repeat(40)} in 5 minutes`), null, 'very long text');
 });
 
-test("doesn't pretend to repeat reminders", () => {
-  assert.deepEqual(detect('remind me every day at 9 to take pills'), { type: 'unsupported', reason: 'repeat' });
-  assert.deepEqual(detect('remind me to feed the cat each morning'), { type: 'unsupported', reason: 'repeat' });
+test('repeating reminders, and honesty about what it cannot repeat', () => {
+  const daily = set('remind me to take pills every day at 9am');
+  assert.deepEqual(daily.repeat, { unit: 'day', every: 1, at: [9, 0] });
+  assert.equal(daily.text, 'take pills');
+  assert.equal(daily.due.getTime(), at(10, 8, 9).getTime());
+  assert.deepEqual(set('remind me every weekday at 8:30 to leave for work').repeat.weekdays, [1, 2, 3, 4, 5]);
+  assert.equal(set('remind me to drink water every 2 hours').due.getTime(), NOW.getTime() + 120 * MIN);
+  // No time of day yet: asks for it, remembering how it repeats.
+  const asked = detect('remind me to call mum every sunday');
+  assert.equal(asked.type, 'ask-when');
+  assert.equal(asked.repeatPhrase, 'every sunday');
+  assert.deepEqual(asked.repeat, { unit: 'week', every: 1, weekdays: [0] });
   // "every" inside the thing to remember is fine.
-  assert.equal(detect('remind me to say hi to everyone in 5 minutes').type, 'set');
-  assert.equal(detect('remind me to give each kid a hug at 5').type, 'set');
+  assert.equal(set('remind me to say hi to everyone in 5 minutes').repeat, undefined);
+  assert.equal(set('remind me to give each kid a hug at 5').repeat, undefined);
+  assert.equal(set('remind me about the daily standup at 10').repeat, undefined);
+  // What it can't do is said, not quietly turned into something else.
+  assert.deepEqual(detect('remind me every day for 5 days to stretch at 9'), { type: 'unsupported', reason: 'end' });
+  assert.deepEqual(detect('remind me to stretch every day until friday at 9'), { type: 'unsupported', reason: 'end' });
+  assert.deepEqual(detect('set a timer every 10 minutes'), { type: 'unsupported', reason: 'repeat-timer' });
+  assert.equal(detect('remind me to stretch every minute').reason, 'too-often');
+  assert.match(reminders.badTimeText('too-often'), /5 minutes/);
+  // "remember to" is a reminder request too.
+  assert.equal(set('remember to call mum at 6').due.getTime(), at(10, 7, 18).getTime());
 });
 
 test('lists, cancels and snoozes', () => {
@@ -398,4 +416,92 @@ test('finds the reminder a cancel request means', () => {
   assert.deepEqual(reminders.matchItems(all, { text: 'pasta' }), [pasta]);
   assert.deepEqual(reminders.matchItems(all, { text: 'unicorns' }), []);
   assert.deepEqual(reminders.matchItems(all, {}), all);
+});
+
+test('"what time?" is answered with a bare time, for a repeat', () => {
+  const ask = detect('remind me every year on march 3 to send a card');
+  const pending = { kind: 'reminder', text: ask.text, connector: ask.connector, repeatPhrase: ask.repeatPhrase };
+  const answer = detect('at 9am', { pending });
+  assert.equal(answer.type, 'set');
+  assert.equal(answer.text, 'send a card');
+  assert.deepEqual(answer.repeat, { unit: 'year', every: 1, at: [9, 0], dom: 3, month: 2 });
+  assert.equal(answer.due.getTime(), new Date(2027, 2, 3, 9).getTime());
+  assert.equal(detect('6pm', { pending }).repeat.at[0], 18);
+  assert.equal(detect('what is the weather', { pending }), null);
+  // The buttons send a whole sentence. That is a new request, not an answer to glue on.
+  for (const b of reminders.askWhen(ask).actions) {
+    const pressed = detect(b.arg, { pending });
+    assert.equal(pressed.type, 'set', b.arg);
+    assert.equal(pressed.text, 'send a card', b.arg);
+    assert.equal(pressed.connector, 'to');
+  }
+  const timerPending = { kind: 'timer', text: '' };
+  assert.equal(detect('set a timer for 5 minutes', { pending: timerPending }).due.getTime(), NOW.getTime() + 5 * MIN);
+  // Nothing to remember yet: "take pills at 9am" says both.
+  const both = detect('take pills at 9am', { pending: { kind: 'reminder', text: '', connector: '', repeatPhrase: 'every day' } });
+  assert.equal(both.text, 'take pills');
+  assert.deepEqual(both.repeat, { unit: 'day', every: 1, at: [9, 0] });
+  // A refused repeat can be fixed with another one.
+  const fixed = detect('every 10 minutes', { pending: { kind: 'reminder', text: 'stretch', connector: 'to' } });
+  assert.equal(fixed.type, 'set');
+  assert.deepEqual(fixed.repeat, { unit: 'minute', every: 10 });
+  // The buttons say things Nibo understands.
+  const buttons = reminders.askWhen(ask).actions;
+  assert.equal(buttons.length, 4);
+  for (const b of buttons) assert.equal(detect(b.arg).type, 'set', b.arg);
+  assert.match(reminders.askWhen(ask).text, /What time should I remind you to “send a card” every year on March 3\?/);
+  assert.match(reminders.askWhen({ ...ask, text: '' }).text, /what time\? ⏰ Like “take pills at 9am”|at what time/);
+});
+
+test('the notebook keeps repeating reminders and sets them for next time', () => {
+  const file = tmpFile();
+  const book = new reminders.ReminderBook(file, { now: () => NOW.getTime() });
+  const daily = book.add({ text: 'pills', due: at(10, 8, 9).getTime(), repeat: { unit: 'day', every: 1, at: [9, 0] } });
+  const once = book.add({ text: 'once', due: at(10, 8, 9, 5).getTime() });
+  assert.deepEqual(daily.repeat, { unit: 'day', every: 1, at: [9, 0] });
+  assert.equal(once.repeat, undefined);
+  // A bad rule is dropped, not kept; timers don't repeat.
+  assert.equal(book.add({ text: 'x', due: at(12, 30, 9).getTime(), repeat: { unit: 'fortnight' } }).repeat, undefined);
+  assert.equal(book.add({ kind: 'timer', text: 'x', due: at(12, 30, 9).getTime(), repeat: { unit: 'day', every: 1, at: [9, 0] } }).repeat, undefined);
+
+  // It rings at 9, and is set for 9 tomorrow. The one-time one is gone.
+  const rung = book.takeDue(at(10, 8, 9, 10).getTime());
+  assert.deepEqual(rung.map((i) => i.text), ['pills', 'once']);
+  assert.equal(rung[0].due, at(10, 8, 9).getTime()); // what rang is when it was due
+  assert.deepEqual(book.list().map((i) => i.text).sort(), ['pills', 'x', 'x']);
+  assert.equal(book.get(daily.id).due, at(10, 9, 9).getTime());
+  // The disk agrees.
+  assert.equal(new reminders.ReminderBook(file).get(daily.id).due, at(10, 9, 9).getTime());
+
+  // Away for a week: it rings once, then waits for the next 9am, not seven rings.
+  const away = book.takeDue(at(10, 16, 12).getTime());
+  assert.equal(away.filter((i) => i.id === daily.id).length, 1);
+  assert.equal(book.get(daily.id).due, at(10, 17, 9).getTime());
+  // Removing it stops the repeat.
+  assert.equal(book.remove(daily.id).text, 'pills');
+  assert.equal(book.takeDue(at(11, 30, 9).getTime()).some((i) => i.id === daily.id), false);
+});
+
+test('says how often, in the confirmation and in the list', () => {
+  const book = new reminders.ReminderBook(tmpFile(), { now: () => NOW.getTime() });
+  const item = book.add({ text: 'take pills', due: at(10, 8, 9).getTime(), repeat: { unit: 'week', every: 1, at: [9, 0], weekdays: [1, 2, 3, 4, 5] } });
+  const clock9 = require('../src/main/when').formatClock(at(10, 8, 9));
+  const confirm = reminders.confirmText(item, { connector: 'to' }, NOW);
+  assert.equal(confirm, `Okay! I'll remind you to take pills every weekday at ${clock9}. ⏰ The first one is tomorrow at ${clock9}.`);
+  const list = reminders.describeList([item], NOW.getTime());
+  assert.match(list.text, new RegExp(`⏰ take pills: every weekday at ${clock9} \\(next: tomorrow at ${clock9}\\)`));
+});
+
+test('the AI tool can set a repeat from a phrase', () => {
+  const parse = (phrase, opts) => reminders.parsePhrase(phrase, { now: NOW, ...opts });
+  const daily = parse('every weekday at 9am');
+  assert.equal(daily.ok, true);
+  assert.equal(daily.how, 'repeat');
+  assert.equal(daily.due.getTime(), at(10, 8, 9).getTime());
+  assert.deepEqual(daily.repeat.weekdays, [1, 2, 3, 4, 5]);
+  assert.equal(parse('every 2 hours').due.getTime(), NOW.getTime() + 120 * MIN);
+  assert.equal(parse('every monday').reason, 'needs-time');
+  assert.equal(parse('every minute').reason, 'too-often');
+  assert.equal(parse('every day for 5 days at 9').reason, 'end');
+  assert.equal(parse('every day at 9', { timer: true }).reason, 'repeat-timer');
 });

@@ -8,6 +8,7 @@
 const REPO = 'assergames80-prog/Nibo-AI';
 const DEFAULT_API = 'https://api.github.com';
 const TIMEOUT_MS = 15_000;
+const MAX_ASSET_BYTES = 600 * 1024 * 1024;
 
 /** "v1.4.0" / "1.4" -> [1, 4, 0], or null when it isn't a version. */
 function parseVersion(text) {
@@ -51,6 +52,8 @@ function parseRelease(json, { portable = false, platform = process.platform, rep
   const url = isReleaseUrl(json.html_url, repo) ? json.html_url : `https://github.com/${repo}/releases/tag/v${version}`;
 
   let assetUrl = null;
+  let size = null;
+  let sha256 = null;
   if (platform === 'win32' && Array.isArray(json.assets)) {
     const wanted = portable ? /portable/i : /setup/i;
     const asset = json.assets.find(
@@ -62,9 +65,15 @@ function parseRelease(json, { portable = false, platform = process.platform, rep
         isReleaseUrl(a.browser_download_url, repo) &&
         a.browser_download_url.includes('/releases/download/'),
     );
-    if (asset) assetUrl = asset.browser_download_url;
+    if (asset) {
+      assetUrl = asset.browser_download_url;
+      // What GitHub says the file is, so a download can be checked against it.
+      if (Number.isSafeInteger(asset.size) && asset.size > 0 && asset.size <= MAX_ASSET_BYTES) size = asset.size;
+      const digest = /^sha256:([0-9a-f]{64})$/i.exec(String(asset.digest || ''));
+      if (digest) sha256 = digest[1].toLowerCase();
+    }
   }
-  return { version, url, assetUrl };
+  return { version, url, assetUrl, size, sha256 };
 }
 
 /**
@@ -117,4 +126,4 @@ function detectIntent(text) {
   return null;
 }
 
-module.exports = { DEFAULT_API, REPO, checkForUpdate, detectIntent, isNewer, isReleaseUrl, parseRelease, parseVersion };
+module.exports = { DEFAULT_API, MAX_ASSET_BYTES, REPO, checkForUpdate, detectIntent, isNewer, isReleaseUrl, parseRelease, parseVersion };

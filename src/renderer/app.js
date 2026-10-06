@@ -689,6 +689,10 @@
       else talkFor(clamp(res.text.length * 35, 600, 2600));
     }
     if (res.reminder) express({ eyes: 'happy', mouth: 'smile' }, 1400);
+    if (res.remembered) {
+      express({ eyes: 'happy', mouth: 'smile' }, 1400);
+      sparkles(4);
+    }
     if (res.opened && res.opened.length) celebrateOpen();
     else if (res.searched) {
       playPose('jump', 560);
@@ -1001,6 +1005,19 @@
     if (res.opened && res.opened.length) celebrateOpen();
   }
 
+  // ---------- memory ----------
+
+  async function memoryAction(action, arg) {
+    touch();
+    let res;
+    try {
+      res = await nibo.memory(action, arg);
+    } catch {
+      res = null;
+    }
+    if (res && res.text) say(res.text);
+  }
+
   // ---------- updates ----------
 
   const updateBtn = $('update-btn');
@@ -1033,6 +1050,47 @@
 
   updateBtn.addEventListener('click', () => updateAction('info'));
 
+  // "✨ Update now": a bubble with a progress bar (and a Cancel chip) while Nibo downloads
+  // the new version; the answer comes back once he has installed it (or given up).
+  let installing = false;
+  const progressLine = (percent) => {
+    const filled = Math.max(0, Math.min(10, Math.round(percent / 10)));
+    return `Getting the new me... ✨\n${'▰'.repeat(filled)}${'▱'.repeat(10 - filled)} ${percent}%`;
+  };
+
+  async function installUpdate() {
+    if (installing) return;
+    touch();
+    if (face.sleeping) wake(false);
+    installing = true;
+    face.thinking = false;
+    say(progressLine(0), { sticky: true, actions: [{ label: '✋ Cancel', action: 'update-cancel' }] });
+    let res;
+    try {
+      res = await nibo.update('install');
+    } catch {
+      res = null;
+    }
+    installing = false;
+    if (!res || !res.ok) return say("Hmm, I couldn't start the update. 🐰");
+    if (res.handoff) {
+      bubble.say(res.text, { sticky: true });
+      express({ eyes: 'happy', mouth: 'smile' }, 1800);
+      if (voiceOut()) speak(res.text);
+      return res;
+    }
+    if (res.text) {
+      express({ brows: 'on', mouth: 'sad' }, 2000);
+      say(res.text, { actions: res.actions, sticky: Boolean(res.sticky) });
+    }
+    return res;
+  }
+
+  nibo.on('nibo:update-progress', (p) => {
+    if (!installing || !p) return;
+    bubble.setText(progressLine(Math.max(0, Math.min(100, Math.floor(Number(p.percent) || 0)))));
+  });
+
   // GitHub just told Nibo about a new version: mention it once, as soon as he's free
   // (not asleep, not mid-answer, not showing something). If he stays busy for two
   // minutes the 🎁 button is still there, and he tries again next time.
@@ -1053,6 +1111,7 @@
   const timerBadge = $('timer-badge');
   const timerText = $('timer-badge-text');
   let alertIds = null; // the reminders the bubble is announcing, until they're answered
+  let alertRepeating = []; // …and which of those repeat
   let alertNext = null;
   let alertWaiting = false;
 
@@ -1121,11 +1180,13 @@
     exitPromptMode();
     stopSpeaking();
     alertIds = alert.items.map((item) => item.id);
+    alertRepeating = alert.items.filter((item) => item.repeating).map((item) => item.id);
     bubble.say(alert.text, {
       sticky: true,
       actions: [
         { label: '💤 5 more minutes', action: 'reminder-snooze' },
         { label: '✅ Done', action: 'reminder-done' },
+        ...(alertRepeating.length ? [{ label: '🔕 Stop repeating', action: 'reminder-stop-repeat' }] : []),
       ],
     });
     playPose('jump', 560);
@@ -1145,6 +1206,14 @@
     nibo.reminders('seen', alertIds);
     alertIds = null;
   });
+
+  function stopRepeatingAlert() {
+    const ids = alertRepeating;
+    alertIds = null;
+    alertRepeating = [];
+    stopSpeaking();
+    return remindersAction('stop-repeat', ids);
+  }
 
   function snoozeAlert() {
     const ids = alertIds || [];
@@ -1381,11 +1450,16 @@
     else if (action.action === 'browser-search') browserSearch(action.arg);
     else if (action.action === 'open-app') openApp(action.arg);
     else if (action.action === 'ask') ask(action.arg);
+    else if (action.action === 'update-install') installUpdate();
+    else if (action.action === 'update-cancel') nibo.update('cancel');
     else if (action.action === 'update-download') updateAction('download');
     else if (action.action === 'update-notes') updateAction('notes');
     else if (action.action === 'update-dismiss') updateAction('dismiss');
     else if (action.action === 'reminder-snooze') snoozeAlert();
     else if (action.action === 'reminder-done') finishAlert();
+    else if (action.action === 'reminder-stop-repeat') stopRepeatingAlert();
+    else if (action.action === 'memory-forget') memoryAction('forget', action.arg);
+    else if (action.action === 'memory-open') memoryAction('open');
     else if (action.action === 'reminder-cancel') remindersAction('cancel', action.arg);
     else if (action.action === 'reminder-cancel-all') remindersAction('cancel-all');
     else if (action.action === 'reminders-list') remindersAction('list');
@@ -1533,6 +1607,7 @@
     if (cmd === 'feed') feed();
     if (cmd === 'toggle-voice') toggleListening();
     if (cmd === 'stop-voice') stopListening(true);
+    if (cmd === 'install-update') installUpdate();
     if (cmd === 'organize-review') {
       say("Take a peek at my plan! 👀 Nothing moves until you say yes.", { sticky: true });
       glance({ x: EYES.x - 400, y: EYES.y - 100 }, 2000);
@@ -1640,7 +1715,15 @@
       });
       nibo.firstRunDone();
     } else {
-      say(state.mood === 'hungry' ? pick(lines.hungry) : pick(lines.greetings), { duration: 6000 });
+      const hello = state.mood === 'hungry' ? pick(lines.hungry) : pick(lines.greetings);
+      if (state.justUpdated) {
+        say(`Ta-da! ✨ I'm v${state.justUpdated.version} now! I updated myself. 🎉${state.userName ? ` Hi ${state.userName}!` : ''}`, { duration: 9000 });
+        sparkles(6);
+        playPose('jump', 560);
+        nibo.update('welcomed');
+      } else {
+        say(state.userName ? `Hi ${state.userName}! ${hello}` : hello, { duration: 6000 });
+      }
     }
   }
 

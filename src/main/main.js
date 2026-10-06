@@ -30,6 +30,9 @@ const apps = require('./apps');
 const reminders = require('./reminders');
 const when = require('./when');
 const updates = require('./updates');
+const updater = require('./updater');
+const repeat = require('./repeat');
+const memory = require('./memory');
 const { WindowsVoice } = require('./tts');
 
 const WIN_W = 360;
@@ -67,7 +70,12 @@ const appCatalog = new apps.AppCatalog();
 let book = null; // the reminders and timers (reminders.json)
 let pendingWhen = null; // Nibo just asked "when?" and is waiting for a time
 let fired = []; // reminders that rang lately: { ...item, firedAt, acked, snoozed }
-let update = null; // the newer release GitHub knows about: { version, url, assetUrl }
+let update = null; // the newer release GitHub knows about: { version, url, assetUrl, size, sha256 }
+let installing = null; // the AbortController of an update that is being downloaded, or 'handoff' once it's started
+let justUpdated = null; // { version, from } when this run is the first one after an update
+let notebook = null; // what Nibo remembers about the user (memory.json)
+let memoryWin = null;
+let lastSaved = null; // the note saved last: { id, at }, so "forget that" knows what "that" is
 
 // ---------- helpers ----------
 
@@ -84,6 +92,10 @@ function fromBunny(event) {
 
 function fromSettings(event) {
   return settingsWin && !settingsWin.isDestroyed() && event.sender === settingsWin.webContents;
+}
+
+function fromMemory(event) {
+  return memoryWin && !memoryWin.isDestroyed() && event.sender === memoryWin.webContents;
 }
 
 function fromOrganize(event) {
@@ -146,7 +158,10 @@ function snapshot() {
     canUndoOrganize,
     recentApps: store.get('recentApps') || [],
     reminders: book ? book.list().map(({ id, kind, text, due }) => ({ id, kind, text, due })) : [],
-    update: visibleUpdate() ? { version: update.version } : null,
+    update: visibleUpdate() ? { version: update.version, oneClick: oneClickOk(), installing: Boolean(installing) } : null,
+    justUpdated,
+    memoryOn: memoryOn(),
+    userName: notebook && memoryOn() ? notebook.name() : '',
     appVersion: app.getVersion(),
     platform: process.platform,
     clickThrough: CLICK_THROUGH,
@@ -183,7 +198,13 @@ async function answerFromWeb(text, query, { signal, onDelta, onEvent }) {
   }
   const sources = web.sourcesOf(search);
   if (!brain.hasKey()) return { ok: true, text: web.formatForBubble(search), sources, searched: true };
-  const result = await brain.ask(text, { signal, onDelta, status: moodStatus(), context: web.formatForModel(search) });
+  const result = await brain.ask(text, {
+    signal,
+    onDelta,
+    status: moodStatus(),
+    context: web.formatForModel(search),
+    notes: memoryOn() ? notebook.forPrompt() : [],
+  });
   return result.ok ? { ...result, sources, searched: true } : result;
 }
 
@@ -334,12 +355,20 @@ function askApproval(plan) {
 function trayMenu() {
   const newer = visibleUpdate();
   return Menu.buildFromTemplate([
-    ...(newer ? [{ label: `🎁 Download Nibo v${newer.version}`, click: () => openUpdate('download') }, { type: 'separator' }] : []),
+    ...(newer
+      ? [
+          oneClickOk()
+            ? { label: `✨ Update Nibo to v${newer.version}`, click: () => (showNibo(), send('nibo:command', 'install-update')) }
+            : { label: `🎁 Download Nibo v${newer.version}`, click: () => openUpdate('download') },
+          { type: 'separator' },
+        ]
+      : []),
     { label: 'Show Nibo', click: showNibo },
     { label: 'Hide Nibo', click: hideNibo },
     { label: 'Talk to Nibo 🎤 (Ctrl+Alt+Space)', click: () => (showNibo(), send('nibo:command', 'toggle-voice')) },
     { type: 'separator' },
     { label: 'Feed Nibo 🥕', click: () => (showNibo(), send('nibo:command', 'feed')) },
+    { label: '🧠 What Nibo remembers…', click: () => openNotebook() },
     { label: 'Settings…', click: openSettings },
     { type: 'separator' },
     { label: 'Quit Nibo', click: () => app.quit() },
@@ -717,13 +746,18 @@ function snoozeCandidates() {
 
 function alertPayload(items) {
   const content = reminders.alertContent(items, Date.now());
-  return { items: items.map(({ id, kind, text }) => ({ id, kind, text })), text: content.text, speech: content.speech };
+  return {
+    items: items.map(({ id, kind, text, repeat }) => ({ id, kind, text, repeating: Boolean(repeat) })),
+    text: content.text,
+    speech: content.speech,
+  };
 }
 
 // Something is due. Nibo says it out loud. If he's hidden in the tray he hops back
 // out to do it: a reminder you asked for must never go unnoticed.
 function ring(items) {
   const now = Date.now();
+  fired = fired.filter((f) => !items.some((item) => item.id === f.id)); // a repeating one rings again: one entry
   for (const item of items) fired.push({ ...item, firedAt: now, acked: false, snoozed: false });
   if (!win || win.isDestroyed()) return;
   if (!win.isVisible()) showNibo();
@@ -788,7 +822,7 @@ function reminderReply(intent) {
   if (intent.type !== 'ask-when' && intent.type !== 'bad-time') pendingWhen = null;
   switch (intent.type) {
     case 'set': {
-      const item = book.add({ kind: intent.kind, text: intent.text, due: intent.due.getTime() });
+      const item = book.add({ kind: intent.kind, text: intent.text, due: intent.due.getTime(), repeat: intent.repeat });
       if (!item) {
         return { text: 'My little notebook is full! 📒 Cancel a few reminders first.', actions: reminders.describeList(book.list()).actions };
       }
@@ -796,13 +830,18 @@ function reminderReply(intent) {
       return { text: reminders.confirmText(item, intent, new Date()), actions: [cancelChip(item)], reminder: true };
     }
     case 'ask-when':
-      pendingWhen = { kind: intent.kind, text: intent.text, connector: intent.connector, at: Date.now() };
+      pendingWhen = { kind: intent.kind, text: intent.text, connector: intent.connector, repeatPhrase: intent.repeatPhrase, at: Date.now() };
       return { ...reminders.askWhen(intent), sticky: true };
     case 'bad-time':
       if (intent.text) pendingWhen = { kind: intent.kind, text: intent.text, connector: intent.connector, at: Date.now() };
       return { text: reminders.badTimeText(intent.reason) };
     case 'unsupported':
-      return { text: "I can only remind you once for now, repeating reminders aren't my thing yet. 🐰 Tell me the next time, and I'll do that one!" };
+      return {
+        text:
+          intent.reason === 'repeat-timer'
+            ? 'Timers only run once! ⏱️ For something that repeats, say “remind me every 25 minutes to …”.'
+            : "I can repeat reminders, but I can't stop them after a while yet. 🐰 Say it without “for 5 days” or “until Friday”, and cancel it whenever you like.",
+      };
     case 'list': {
       const list = reminders.describeList(book.list(), Date.now());
       return { ...list, sticky: list.actions.length > 0 };
@@ -823,6 +862,11 @@ const TOOL_BAD_TIME = {
   far: 'that is too far away (about a year is the limit)',
   zero: 'that is right now',
   baddate: 'that date does not exist',
+  'needs-time': 'the time of day is missing: ask the user what time it should repeat',
+  'too-often': 'repeating more often than every 5 minutes is not allowed',
+  'too-far': 'that repeat is too far apart',
+  end: 'stopping a repeat after a while is not supported yet',
+  'repeat-timer': 'timers cannot repeat: set a repeating reminder instead (timer false)',
 };
 
 // The set_reminder tool for the AI. The cancel buttons go under its answer.
@@ -834,13 +878,176 @@ function reminderTool(actions, flags) {
       return { text: `Nothing was set: I couldn't understand the time "${phrase}". Ask the user when, like "in 20 minutes", "at 6pm" or "tomorrow at 9am".` };
     }
     if (!found.ok) return { text: `Nothing was set: ${TOOL_BAD_TIME[found.reason] || 'that time cannot be used'}.` };
-    const item = book.add({ kind: timer ? 'timer' : 'reminder', text: String(what || '').replace(/\s+/g, ' ').trim(), due: found.due.getTime() });
+    const item = book.add({
+      kind: timer ? 'timer' : 'reminder',
+      text: String(what || '').replace(/\s+/g, ' ').trim(),
+      due: found.due.getTime(),
+      repeat: found.repeat,
+    });
     if (!item) return { text: 'Nothing was set: the notebook is full (50 reminders).' };
     flags.reminder = true;
     actions.push(cancelChip(item));
     broadcastState();
     const thing = item.kind === 'timer' ? 'Timer' : 'Reminder';
-    return { text: `Done. ${thing}${item.text ? ` "${item.text}"` : ''} will go off ${when.describeDue(new Date(item.due), now)}.` };
+    const rings = item.repeat
+      ? `will go off ${repeat.describeRule(item.repeat)}, the first time ${when.describeDue(new Date(item.due), now)}`
+      : `will go off ${when.describeDue(new Date(item.due), now)}`;
+    return { text: `Done. ${thing}${item.text ? ` "${item.text}"` : ''} ${rings}.` };
+  };
+}
+
+// ---------- memory ----------
+
+const SAVED_MS = 10 * 60_000; // "forget that" means a note saved in the last few minutes
+const memoryFile = () => path.join(app.getPath('userData'), 'memory.json');
+const memoryOn = () => store && store.get('memoryOn') !== false;
+const forgetChip = (note) => ({ label: '↩️ Forget it', action: 'memory-forget', arg: note.id });
+const notebookChip = { label: '🧠 Open my notebook', action: 'memory-open' };
+const noteWord = (n) => `${n} ${n === 1 ? 'thing' : 'things'}`;
+
+const NOT_SAVED = {
+  secret: "I'd rather not keep passwords, card numbers or secret keys. 🔒 A password manager is the right place for those!",
+  full: 'My notebook is full! 📒 Forget a few things first.',
+  duplicate: 'I already know that! 🐰',
+  empty: "I didn't catch what to remember. 🐰",
+};
+
+function notebookChanged() {
+  broadcastState();
+  if (memoryWin && !memoryWin.isDestroyed()) memoryWin.webContents.send('memory:changed');
+}
+
+function openNotebook() {
+  if (memoryWin && !memoryWin.isDestroyed()) {
+    memoryWin.show();
+    memoryWin.focus();
+    return;
+  }
+  memoryWin = createPopup({
+    page: 'memory.html',
+    preload: 'memory-preload.js',
+    title: 'Nibo AI — What I remember',
+    width: 540,
+    height: 560,
+    minWidth: 420,
+    minHeight: 420,
+  });
+  memoryWin.on('closed', () => {
+    memoryWin = null;
+  });
+}
+
+function saveNote(text) {
+  const res = notebook.add(text);
+  if (res.ok) {
+    lastSaved = { id: res.note.id, at: Date.now() };
+    notebookChanged();
+  }
+  return res;
+}
+
+async function forgetEverything(parent) {
+  const n = notebook.count;
+  const { response } = await dialog.showMessageBox(parent || undefined, {
+    type: 'question',
+    title: 'Forget everything?',
+    message: `Forget all ${noteWord(n)} Nibo remembers about you?`,
+    detail: "This can't be undone.",
+    buttons: ['Forget everything', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    icon: nativeImage.createFromPath(iconPath()),
+  });
+  if (response !== 0) return false;
+  notebook.clear();
+  lastSaved = null;
+  notebookChanged();
+  return true;
+}
+
+async function forgetReply(intent) {
+  if (intent.all) {
+    if (!notebook.count) return { text: "There's nothing to forget! 🐰" };
+    const n = notebook.count;
+    return (await forgetEverything()) ? { text: `Poof! I forgot everything. 🧹 (${noteWord(n)})` } : { text: 'Okay, I still remember everything! 🧠' };
+  }
+  if (intent.last) {
+    if (!lastSaved || Date.now() - lastSaved.at > SAVED_MS) return null; // "forget it" was just a figure of speech
+    const note = notebook.remove(lastSaved.id);
+    lastSaved = null;
+    if (!note) return null;
+    notebookChanged();
+    return { text: `Okay, I forgot that. 🧹 “${reminders.shorten(note.text, 80)}”` };
+  }
+  const matches = notebook.find(intent.text);
+  if (matches.length === 1) {
+    notebook.remove(matches[0].id);
+    notebookChanged();
+    return { text: `Okay, I forgot “${reminders.shorten(matches[0].text, 80)}”. 🧹` };
+  }
+  if (matches.length > 1) {
+    return {
+      text: 'Which one should I forget? 🤔',
+      actions: matches.slice(0, 4).map((n) => ({ label: `✖️ ${reminders.shorten(n.text, 22)}`, action: 'memory-forget', arg: n.id })),
+      sticky: true,
+    };
+  }
+  // Only answer when it was clearly about the user ("forget my dog"), not "forget the meeting".
+  if (/\b(?:my|me|i)\b/i.test(intent.text)) {
+    return { text: `I couldn't find a note about “${reminders.shorten(intent.text, 40)}”. 🤔`, actions: notebook.count ? [notebookChip] : [] };
+  }
+  return null;
+}
+
+// What Nibo says (and does) about "remember that…", "call me Sam", "what do you remember?", "forget…".
+async function memoryReply(intent) {
+  if (!memoryOn()) {
+    return { text: 'My memory is switched off. 🧠 You can turn it on in Settings.', actions: [{ label: '⚙️ Settings', action: 'settings' }] };
+  }
+  switch (intent.type) {
+    case 'name': {
+      const res = notebook.setName(intent.name);
+      if (res.reason === 'duplicate') return { text: `I already know you're ${intent.name}! 😄` };
+      if (!res.ok) return { text: NOT_SAVED[res.reason] || NOT_SAVED.empty, actions: res.reason === 'full' ? [notebookChip] : [] };
+      lastSaved = { id: res.note.id, at: Date.now() };
+      notebookChanged();
+      return { text: `Nice to meet you, ${intent.name}! 🐰 I'll remember that.`, actions: [forgetChip(res.note)], remembered: true };
+    }
+    case 'remember': {
+      const res = saveNote(intent.text);
+      if (res.ok) return { text: `Okay, I'll remember that! 🧠 “${reminders.shorten(res.note.text, 80)}”`, actions: [forgetChip(res.note)], remembered: true };
+      if (res.reason === 'empty') return null;
+      return { text: NOT_SAVED[res.reason], actions: res.reason === 'full' ? [notebookChip] : [] };
+    }
+    case 'show':
+      if (!notebook.count) {
+        return { text: "I don't remember anything about you yet! 🐰 Tell me something, like “remember that I love cats” or “call me Sam”." };
+      }
+      openNotebook();
+      return { text: `Here's my notebook! 🧠 I remember ${noteWord(notebook.count)} about you.` };
+    case 'forget':
+      return forgetReply(intent);
+    default:
+      return null;
+  }
+}
+
+// The remember tool for the AI. A ↩️ Forget it button goes under its answer.
+function rememberTool(actions, flags) {
+  return async (note) => {
+    const res = saveNote(note);
+    if (res.ok) {
+      flags.remembered = true;
+      actions.push(forgetChip(res.note));
+      return { text: 'Saved. The user can see and delete it in your notebook.' };
+    }
+    const why = {
+      duplicate: 'you already have that note',
+      secret: 'it looks like a password, card number or key, which you must never keep: tell the user you would rather not',
+      full: 'the notebook is full (60 notes): tell the user to forget a few',
+    }[res.reason];
+    return { text: `Nothing was saved${why ? `: ${why}` : ''}.` };
   };
 }
 
@@ -855,9 +1062,22 @@ function visibleUpdate() {
   return store.get('dismissedUpdate') === update.version ? null : update;
 }
 
+// Can Nibo fetch and install this update himself (and if not, he offers the browser download)?
+function oneClickOk() {
+  return Boolean(
+    update &&
+      updater.supported({
+        update,
+        packaged: app.isPackaged,
+        platform: process.platform,
+        portableFile: process.env.PORTABLE_EXECUTABLE_FILE,
+      }).ok,
+  );
+}
+
 function updateChips() {
   return [
-    { label: '⬇️ Download', action: 'update-download' },
+    oneClickOk() ? { label: '✨ Update now', action: 'update-install' } : { label: '⬇️ Download', action: 'update-download' },
     { label: "📝 What's new", action: 'update-notes' },
     { label: '🙈 Hide this', action: 'update-dismiss' },
   ];
@@ -931,6 +1151,88 @@ async function openUpdate(which) {
   };
 }
 
+// Where the new file goes while it downloads, and what it's called. (Fixed names:
+// the version is digits only, so nothing from the network ends up in a path.)
+const updateFolder = () => path.join(app.getPath('temp'), 'nibo-update');
+const portableTarget = () => process.env.PORTABLE_EXECUTABLE_FILE;
+const freshFile = (version) => (IS_PORTABLE ? `${portableTarget()}.new` : path.join(updateFolder(), `Nibo-AI-Setup-${version}.exe`));
+
+const downloadChip = [{ label: '⬇️ Download in browser', action: 'update-download' }];
+
+function updateTrouble(err) {
+  console.error('[nibo] one-click update failed:', err.message);
+  const why = {
+    network: "I couldn't get the file from GitHub. 🌐",
+    verify: "The file didn't look right (it didn't match what GitHub published), so I threw it away. 🛡️",
+    install: "I couldn't start the installer. 😿",
+  }[err.kind];
+  return {
+    text: `${why || 'Something went wrong while updating. 😿'} Nothing was changed. You can get it in your browser instead!`,
+    actions: [...downloadChip, { label: "📝 What's new", action: 'update-notes' }],
+    sticky: true,
+  };
+}
+
+// "Update now": download the new version (checking it is exactly what GitHub published),
+// then install it quietly and start again. Anything odd stops it with nothing changed.
+async function installUpdate() {
+  if (!update) return { text: "I don't know of a newer version right now. 🐰" };
+  if (installing) return { text: "I'm already on it! ✨ Give me a moment.", sticky: false };
+  const plan = updater.supported({
+    update,
+    packaged: app.isPackaged,
+    platform: process.platform,
+    portableFile: process.env.PORTABLE_EXECUTABLE_FILE,
+  });
+  if (!plan.ok) return { text: `I can't update myself here (${plan.reason}), but you can download it! ⬇️`, actions: downloadChip, sticky: true };
+
+  const release = update;
+  const to = freshFile(release.version);
+  const controller = new AbortController();
+  installing = controller;
+  broadcastState();
+  const progress = (p) => send('nibo:update-progress', { percent: p.percent, version: release.version });
+  try {
+    progress({ percent: 0 });
+    await updater.download({ url: release.assetUrl, to, size: release.size, sha256: release.sha256, onProgress: progress, signal: controller.signal });
+    if (IS_PORTABLE) updater.launchSwap({ target: portableTarget(), fresh: to, waitFor: [process.pid] });
+    else await updater.launchInstaller(to);
+  } catch (err) {
+    installing = null;
+    broadcastState();
+    try {
+      fs.rmSync(to, { force: true });
+    } catch {
+      // already gone
+    }
+    if (err instanceof updater.UpdateError && err.kind === 'cancelled') return { text: "Okay, I stopped. Nothing was changed! 🐰" };
+    return updateTrouble(err instanceof updater.UpdateError ? err : new updater.UpdateError(err.message, 'network'));
+  }
+  // The installer (or the swap) is running on its own now. Say goodbye, then get out of its way.
+  installing = 'handoff';
+  setTimeout(() => app.quit(), 1800);
+  return { text: `Got v${release.version}! ✨ Updating now, I'll be right back! 👋`, handoff: true };
+}
+
+function cancelInstall() {
+  if (installing && installing !== 'handoff') installing.abort();
+}
+
+// Tidy up what a finished (or abandoned) update left lying around.
+function cleanUpdateLeftovers() {
+  if (installing) return; // an update is being fetched right now
+  const gone = (p) => {
+    try {
+      fs.rmSync(p, { recursive: true, force: true });
+    } catch {
+      // still in use: next time
+    }
+  };
+  gone(updateFolder());
+  const target = portableTarget();
+  if (target) for (const suffix of ['.old', '.new', '.new.part']) gone(`${target}${suffix}`);
+}
+
 // ---------- IPC ----------
 
 function registerIpc() {
@@ -990,6 +1292,11 @@ function registerIpc() {
       if (reply) return { ok: true, ...reply };
       pendingWhen = null;
 
+      // "remember that I love cats", "call me Sam", "what do you remember?", "forget my name"
+      const noteIntent = !payload?.remind && notebook && memory.detect(text);
+      const noteReply = noteIntent && (await memoryReply(noteIntent));
+      if (noteReply) return { ok: true, ...noteReply };
+
       const organizeTarget = offline.detectOrganize(text);
       if (organizeTarget) return { ok: true, organize: organizeTarget };
       // "open spotify": quick, no AI needed when the name means something.
@@ -1014,7 +1321,7 @@ function registerIpc() {
     const onDelta = (delta) => live('nibo:delta', { delta });
     const onEvent = (ev) => ev.type === 'searching' && live('nibo:search-status', { query: ev.query });
     const toolActions = [];
-    const toolFlags = { reminder: false };
+    const toolFlags = { reminder: false, remembered: false };
     try {
       const result = query
         ? await answerFromWeb(text, query, { signal: controller.signal, onDelta, onEvent })
@@ -1026,12 +1333,15 @@ function registerIpc() {
             search: webSearchTool(),
             openApp: appTool(toolActions),
             setReminder: reminderTool(toolActions, toolFlags),
+            remember: memoryOn() ? rememberTool(toolActions, toolFlags) : undefined,
+            notes: memoryOn() ? notebook.forPrompt() : [],
           });
       if (result.ok) {
         petState = pet.cheer(petState, 1);
         savePet();
         if (toolActions.length) result.actions = toolActions;
         if (toolFlags.reminder) result.reminder = true;
+        if (toolFlags.remembered) result.remembered = true;
       } else if (result.kind === 'auth') {
         result.actions = [{ label: '⚙️ Open Settings', action: 'settings' }];
       } else if (result.kind === 'network') {
@@ -1051,6 +1361,50 @@ function registerIpc() {
     return { ok: true, text: res.text, opened: res.opened, actions: res.actions };
   });
 
+  // Buttons under an answer: forget one note, open the notebook.
+  ipcMain.handle('nibo:memory', (e, payload) => {
+    if (!fromBunny(e) || !notebook) return { ok: false };
+    const action = String(payload?.action ?? '');
+    if (action === 'open') {
+      openNotebook();
+      return { ok: true };
+    }
+    if (action === 'forget') {
+      const id = typeof payload?.arg === 'string' ? payload.arg : '';
+      const note = notebook.remove(id);
+      if (note) {
+        if (lastSaved && lastSaved.id === id) lastSaved = null;
+        notebookChanged();
+      }
+      return { ok: true, text: note ? 'Okay, I forgot that. 🧹' : 'That one is already gone. 🐰' };
+    }
+    return { ok: false };
+  });
+
+  // The notebook window.
+  ipcMain.handle('memory:list', (e) =>
+    fromMemory(e) ? { notes: notebook.list().map(({ id, text, at }) => ({ id, text, at })), on: memoryOn() } : null,
+  );
+  ipcMain.handle('memory:add', (e, text) => {
+    if (!fromMemory(e)) return { ok: false };
+    const res = saveNote(String(text ?? '').slice(0, memory.MAX_INPUT));
+    return res.ok ? { ok: true } : { ok: false, message: NOT_SAVED[res.reason] || NOT_SAVED.empty };
+  });
+  ipcMain.handle('memory:remove', (e, id) => {
+    if (!fromMemory(e)) return { ok: false };
+    const note = notebook.remove(String(id));
+    if (note) {
+      if (lastSaved && lastSaved.id === note.id) lastSaved = null;
+      notebookChanged();
+    }
+    return { ok: Boolean(note) };
+  });
+  ipcMain.handle('memory:clear', async (e) => {
+    if (!fromMemory(e) || !notebook.count) return { cleared: false };
+    return { cleared: await forgetEverything(memoryWin) };
+  });
+  ipcMain.on('memory:close', (e) => fromMemory(e) && memoryWin.close());
+
   // The 🎁 button: download / notes / dismiss / check.
   ipcMain.handle('nibo:update', async (e, payload) => {
     if (!fromBunny(e)) return { ok: false };
@@ -1065,6 +1419,15 @@ function registerIpc() {
       if (update) store.set({ dismissedUpdate: update.version });
       updateChanged();
       return { ok: true, text: "Okay, I'll stay quiet about it! 🤫 Say “check for updates” whenever you like." };
+    }
+    if (action === 'install') return { ok: true, ...(await installUpdate()) };
+    if (action === 'cancel') {
+      cancelInstall();
+      return { ok: true };
+    }
+    if (action === 'welcomed') {
+      justUpdated = null;
+      return { ok: true };
     }
     if (action === 'download' || action === 'notes') return { ok: true, ...(await openUpdate(action)) };
     return { ok: false };
@@ -1088,6 +1451,13 @@ function registerIpc() {
         const gone = book.clear();
         broadcastState();
         return { ok: true, text: gone.length ? `Poof! ${gone.length === 1 ? 'It is' : `All ${gone.length} are`} gone. 🧹` : 'There was nothing to cancel. 🐰' };
+      }
+      case 'stop-repeat': { // the 🔕 button on a repeating alert
+        const stopped = ids.map((id) => book.remove(id)).filter(Boolean);
+        ack(ids);
+        broadcastState();
+        if (!stopped.length) return { ok: true, text: 'That one has stopped already. 🐰' };
+        return { ok: true, text: `Okay, I'll stop reminding you ${stopped.length === 1 && stopped[0].text ? `about “${reminders.shorten(stopped[0].text, 30)}”` : 'about those'}. 🔕` };
       }
       case 'snooze':
         return { ok: true, ...snooze(recentFired().filter((f) => ids.includes(f.id) && !f.snoozed), SNOOZE_MS) };
@@ -1236,6 +1606,8 @@ function registerIpc() {
       voice: Boolean(store.get('voice')),
       boil: store.get('boil') !== false,
       checkUpdates: store.get('checkUpdates') !== false,
+      memoryOn: memoryOn(),
+      memoryCount: notebook ? notebook.count : 0,
       canStartWithSystem: IS_WIN || IS_MAC,
       startWithSystem: IS_WIN || IS_MAC ? app.getLoginItemSettings().openAtLogin : false,
       encrypted: safeStorage.isEncryptionAvailable(),
@@ -1258,6 +1630,7 @@ function registerIpc() {
     if (typeof patch.autoSearch === 'boolean') next.autoSearch = patch.autoSearch;
     if (typeof patch.bargeIn === 'boolean') next.bargeIn = patch.bargeIn;
     if (typeof patch.checkUpdates === 'boolean') next.checkUpdates = patch.checkUpdates;
+    if (typeof patch.memoryOn === 'boolean') next.memoryOn = patch.memoryOn;
     if (MIC_SENSITIVITIES.includes(patch.micSensitivity)) next.micSensitivity = patch.micSensitivity;
     store.set(next);
 
@@ -1284,6 +1657,8 @@ function registerIpc() {
     return web.testTavilyKey(candidate);
   });
 
+  ipcMain.on('settings:open-memory', (e) => fromSettings(e) && openNotebook());
+
   ipcMain.on('settings:open-external', (e, url) => {
     if (fromSettings(e) && isWebUrl(url)) shell.openExternal(String(url));
   });
@@ -1305,6 +1680,14 @@ function init() {
   savePet();
   canUndoOrganize = Boolean(organizer.loadHistory(historyFile()));
   book = new reminders.ReminderBook(reminderFile());
+  notebook = new memory.Memory(memoryFile());
+
+  // The first run after an update (by Nibo or by hand) gets a "ta-da".
+  const lastRun = store.get('lastRunVersion');
+  if (lastRun && updates.isNewer(app.getVersion(), lastRun)) justUpdated = { version: app.getVersion(), from: lastRun };
+  if (lastRun !== app.getVersion()) store.set({ lastRunVersion: app.getVersion() });
+  // Whatever the installer or the swap left behind is cleared out once things have settled.
+  setTimeout(cleanUpdateLeftovers, 30_000).unref();
 
   brain = new Brain({
     getApiKey: () => store.getApiKey(),

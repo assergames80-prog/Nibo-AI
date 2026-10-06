@@ -102,6 +102,14 @@
     scheduleHide(opts.sticky ? 0 : (opts.duration ?? readingTime(text)));
   }
 
+  // Change the words only (the chips stay put, so a click on one can't be lost), e.g. a progress bar.
+  function setText(text) {
+    cancelRender();
+    streamText = '';
+    render(text);
+    show();
+  }
+
   // Bouncing dots, optionally under a line like what Nibo heard or is looking up.
   function thinking(label) {
     cancelRender();
@@ -166,6 +174,7 @@
 
   window.NiboBubble = {
     say,
+    setText,
     thinking,
     startStream,
     append,

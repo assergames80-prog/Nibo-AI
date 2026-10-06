@@ -2,7 +2,7 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-const EVENTS = new Set(['nibo:delta', 'nibo:search-status', 'nibo:state', 'nibo:cursor', 'nibo:hop', 'nibo:command', 'nibo:reminder', 'nibo:update']);
+const EVENTS = new Set(['nibo:delta', 'nibo:search-status', 'nibo:state', 'nibo:cursor', 'nibo:hop', 'nibo:command', 'nibo:reminder', 'nibo:update', 'nibo:update-progress']);
 
 contextBridge.exposeInMainWorld('nibo', {
   getState: () => ipcRenderer.invoke('nibo:get-state'),
@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('nibo', {
   cancel: (id) => ipcRenderer.send('nibo:cancel', id),
   preset: (name, arg) => ipcRenderer.invoke('nibo:preset', { name, arg }),
   openApp: (name) => ipcRenderer.invoke('nibo:open-app', String(name)),
+  memory: (action, arg) => ipcRenderer.invoke('nibo:memory', { action: String(action), arg }),
   update: (action) => ipcRenderer.invoke('nibo:update', { action: String(action) }),
   reminders: (action, arg) => ipcRenderer.invoke('nibo:reminders', { action: String(action), arg }),
   organize: (target) => ipcRenderer.invoke('nibo:organize', String(target)),

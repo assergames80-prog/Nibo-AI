@@ -19,7 +19,8 @@ Inspired by classic desktop buddies like BonziBuddy.
 - **Opens your apps.** Say or type *"open Spotify"* and off it goes. He also opens your folders (*"open my
   downloads"*) and popular websites (*"open YouTube"*).
 - **Reminders and timers.** Say or type *"remind me to call mum in 20 minutes"* or *"set a timer for 5 minutes"*.
-  He hops over, tells you out loud when it's time, and shows a countdown while a timer runs.
+  He hops over, tells you out loud when it's time, and shows a countdown while a timer runs. They can repeat too
+  (*"remind me every weekday at 8 to take my pills"*).
 - **Talk to him.** Click 🎤 (or press **Ctrl+Alt+Space** anywhere) and just speak. He answers out loud while the reply
   streams in, keeps listening hands-free, and you can **interrupt him by talking over him**.
 - **Silly presets.** Click **Preset ▾** or right-click Nibo:
@@ -44,7 +45,10 @@ Inspired by classic desktop buddies like BonziBuddy.
 - **Works offline too.** Without an API key, his little bunny brain still handles greetings, jokes, fun facts,
   math, the time and date, and offers to search the web for everything else.
 - **Lives in the tray.** You can hide him, bring him back, and have him start when you log in.
-- **Tells you about updates.** When a newer version is out, a 🎁 button appears next to him.
+- **Remembers you.** Tell him *"call me Sam"* or *"remember that I have a dog called Biscuit"* and he keeps it on your
+  computer, so his answers feel like they come from a friend. You can read and delete everything he knows.
+- **Updates himself.** When a newer version is out, a 🎁 button appears next to him. Click **✨ Update now** and he
+  downloads it, checks it is exactly what GitHub published, installs it and comes back by himself.
 
 ## Download for Windows
 
@@ -62,12 +66,26 @@ Inspired by classic desktop buddies like BonziBuddy.
 Shortly after he starts, and every few hours after that, Nibo asks GitHub whether a newer release is out. If there is,
 he tells you once, and a **🎁 v1.x.y** button waits next to him (and at the top of his tray menu).
 
-- **⬇️ Download** opens the right file for you in your browser: the installer, or the portable file if that's what you
-  run. Run the installer to update in place (it asks you to close Nibo first), or use the new portable file instead
-  of the old one. Nibo never downloads or installs anything by himself.
+- **✨ Update now** does it all for you. Nibo downloads the new version from this project's GitHub release (you see a
+  progress bar, and you can **✋ Cancel**), checks that the file is exactly the size and SHA-256 checksum GitHub
+  published for it, and only then installs it:
+  - **Installed with the Setup file:** he runs the installer quietly, closes, and the new Nibo starts by itself.
+  - **Portable file:** he swaps the new file in place of the old one and starts it. The old file is kept until
+    the new one is in place, and put back if anything goes wrong.
+
+  The first thing the new version says is *"Ta-da, I updated myself!"*. If anything looks wrong (the file isn't the
+  one GitHub published, GitHub can't be reached, the folder can't be written to), he stops, changes nothing, and
+  offers **⬇️ Download in browser** instead.
+- **⬇️ Download** opens the right file in your browser (the installer, or the portable file if that's what you run).
+  It is shown instead of ✨ Update now when Nibo can't update himself.
 - **📝 What's new** opens the release page. **🙈 Hide this** hides the button until the next version.
 - Say *"check for updates"* to check right now, or *"what version are you?"*.
-- Don't want the checks? Turn off **Tell me when a new version is out** in Settings.
+- Don't want the checks? Turn off **Tell me when a new version is out** in Settings. Nothing is ever downloaded
+  until you click ✨ Update now.
+- One-click updating starts with v2.0.0. Moving *to* v2.0.0 from an older version is still the manual way (the
+  button in those versions opens your browser).
+- The files are not code-signed yet, so Windows SmartScreen may warn you when you run a downloaded installer by hand
+  (**More info → Run anyway**).
 
 ## Give Nibo a brain (Groq API key)
 
@@ -147,7 +165,42 @@ everything he's keeping track of.
 - Reminders are saved, so they survive a restart. Nibo can only ring while he's running (hiding him in the tray is
   fine, and **Start Nibo when I log in** in Settings helps), and anything that came due while he was away is
   announced when he's back.
-- They're one-time only for now, so *"every day at 9"* isn't supported yet. He can keep up to 50 at once.
+- He can keep up to 50 at once.
+
+### Repeating reminders
+
+Add *"every …"* and the reminder comes back by itself, each time at the right moment:
+
+- *"remind me every day at 9 to take my vitamins"*, *"every weekday at 8:30 to start work"*, *"remind me on
+  mondays at 5pm to send the report"*, *"every monday and thursday at 6:30pm to go running"*
+- *"every other day at 9"*, *"every 2 weeks on friday"*, *"on the 15th of every month to pay rent"*,
+  *"every year on march 3 at 8am to call grandma"*, *"every morning"*, *"every evening at 7"*
+- *"remind me to stand up every 2 hours"*, *"every 45 minutes"*, *"every half hour"* (the shortest is every 5 minutes)
+- If you leave out the time (*"every monday"*), he asks, with **9 AM / 12 PM / 6 PM / 9 PM** buttons.
+- When one rings, he offers **5 more minutes**, **✅ Done** (it just waits for the next time) and **🔕 Stop repeating**.
+  The list shows the repeat next to each one (*"every weekday at 8:30"*) with its next time.
+- If your computer was off or asleep at the time, he rings once when he's back and skips the ones he missed. He
+  doesn't pile them up. Clock changes (summer time) are handled, so *"every day at 9"* stays 9:00.
+- He can't stop after a number of times (*"every day for 5 days"* is turned down, so you don't get a reminder that
+  never ends when you didn't want one). Just say *"cancel"* or press 🔕 when you're done.
+
+## Nibo remembers you
+
+Tell him things about yourself, in your own words, and he keeps them in a little notebook on your computer:
+
+- *"remember that I have a dog called Biscuit"*, *"call me Sam"*, *"my birthday is March 3"*, *"keep in mind that I work
+  nights"*, *"from now on answer briefly"*, *"don't forget that I'm allergic to nuts"*
+- With a Groq key, he also saves things by himself when you mention something clearly lasting about you ("I just
+  started learning the violin"), and says so, so nothing is saved in secret. He never saves passwords, card numbers,
+  keys or other secrets: he'll say he'd rather not.
+- Then it just shows in how he talks: he greets you by name and brings it up when it fits.
+- *"what do you remember about me?"* (or **🧠 What Nibo remembers…** in his tray menu and Settings) opens the
+  notebook: read, add and delete notes, or **Forget everything** (after a confirmation).
+- *"forget my name"*, *"forget about my dog"* and *"forget that"* (the note he just saved) remove notes.
+- He keeps up to 60 short notes. Turn memory off completely with **Let Nibo remember things about me** in Settings.
+
+Notes are stored in `%APPDATA%\Nibo AI\memory.json` and are never sent anywhere except to Groq, as part of the
+question you ask (see Privacy). Nibo treats them as facts about you, never as instructions.
 
 ## Organize my files
 
@@ -181,6 +234,9 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
 | Say "open Spotify" | Opens it (apps, folders like Downloads, websites like YouTube) |
 | Say "check for updates" | Looks for a newer Nibo (a 🎁 button appears when there is one) |
 | Say "remind me to … in 20 minutes" | Reminds you, out loud, when it's time (or "set a timer for 5 minutes") |
+| Say "remind me every weekday at 8 to …" | Reminds you again and again, on schedule |
+| Say "remember that I have a dog called Biscuit" | Remembers it (see it all with "what do you remember?") |
+| 🎁 button → ✨ Update now | Downloads, checks and installs the new version, then restarts |
 | Say "organize my desktop" | Plans a tidy-up and asks for your approval |
 | 🥕 button | Carrot time! |
 | Tray icon | Show / hide Nibo, feed him, settings, quit |
@@ -194,6 +250,12 @@ then pick **Desktop**, **Downloads** or **Pick a folder…**. Nibo looks around 
   Nibo detects speech are sent to Groq for transcription. Audio is never saved.
 - **Update checks** ask GitHub (api.github.com) for the latest release of Nibo. Nothing about you is sent beyond what
   any web request includes, like your IP address. You can turn them off in Settings.
+- **What Nibo remembers** is kept on your computer, in `%APPDATA%\Nibo AI\memory.json`. Because it's how he
+  gets to know you, the notes are sent to Groq along with your questions, just like the chat itself. Turn memory off in
+  Settings and nothing is saved or sent. You can see and delete everything any time.
+- **One-click updates** download the release file straight from this project's GitHub releases (github.com, and the
+  addresses GitHub redirects its downloads to). Nibo only accepts files for his own repository, checks the size and
+  SHA-256 GitHub lists for them, and does nothing without your click on ✨ Update now.
 - **Reminders and timers** are kept on your computer, in `%APPDATA%\Nibo AI\reminders.json`. Nibo understands the usual
   phrases himself. Only if you word a request in a way he needs the AI for, that message goes to Groq like any chat.
 - **Opening apps** happens on your computer. Your list of apps is never sent anywhere.
@@ -234,8 +296,11 @@ src/main/       Electron main process
   websearch.js  Tavily web search
   apps.js       opening apps: the Start menu list, name matching, launching
   when.js       understanding times: "in 20 minutes", "tomorrow at 9", "on the 15th"
+  repeat.js     "every weekday at 9": repeat rules, next time, skipping what was missed
   reminders.js  reminders and timers: what you asked for, and the saved notebook
+  memory.js     what Nibo remembers about you: notes, chat phrases, secret guard
   updates.js    is there a newer release? (GitHub), version compare, safe release links
+  updater.js    one-click update: verified download, silent install, portable swap
   offline.js    the offline bunny brain, web search URLs, chat intents
   organizer.js  file tidying: plan, apply, undo
   pet.js        tummy & happiness

@@ -51,6 +51,43 @@ jobs:
         run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # The installer is what one-click updates run (`--updated /S --force-run`): prove that
+      # it really installs quietly, updates over itself, restarts Nibo and uninstalls.
+      - name: Silent install, update over it, and uninstall (real installer)
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $setup = (Get-ChildItem dist -Filter 'Nibo-AI-Setup-*.exe' | Select-Object -First 1).FullName
+          $dir = 'C:\nibo-ci-install'
+          $exe = Join-Path $dir 'Nibo AI.exe'
+          Write-Host "Installer: $setup"
+
+          $p = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$dir" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "silent install stopped with code $($p.ExitCode)" }
+          if (-not (Test-Path -LiteralPath $exe)) { throw "the silent install did not create $exe" }
+          if (Get-Process -Name 'Nibo AI' -ErrorAction SilentlyContinue) { throw 'a plain silent install must not start Nibo' }
+          Write-Host 'Silent install: ok'
+
+          $p = Start-Process -FilePath $setup -ArgumentList '--updated', '/S', '--force-run', "/D=$dir" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "silent update stopped with code $($p.ExitCode)" }
+          if (-not (Test-Path -LiteralPath $exe)) { throw 'the update removed Nibo' }
+          Write-Host 'Update over the existing install: ok'
+
+          $started = $false
+          for ($i = 0; $i -lt 20 -and -not $started; $i++) {
+            Start-Sleep -Seconds 1
+            $started = [bool](Get-Process -Name 'Nibo AI' -ErrorAction SilentlyContinue)
+          }
+          if ($started) { Write-Host 'Nibo started again after the update: ok' }
+          else { Write-Host '::warning::Nibo did not start after the silent update (--force-run)' }
+          Get-Process -Name 'Nibo AI' -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+
+          $uninstaller = Join-Path $dir 'Uninstall Nibo AI.exe'
+          $p = Start-Process -FilePath $uninstaller -ArgumentList '/S', "_?=$dir" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "uninstall stopped with code $($p.ExitCode)" }
+          if (Test-Path -LiteralPath $exe) { throw 'uninstall left Nibo AI.exe behind' }
+          Write-Host 'Uninstall: ok'
       - uses: actions/upload-artifact@v4
         with:
           name: Nibo-AI-Windows

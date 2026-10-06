@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const when = require('./when');
+const repeat = require('./repeat');
 
 const MAX_ACTIVE = 50;
 const MAX_TEXT = 200;
@@ -60,6 +61,7 @@ const REMIND_LEAD = new RegExp(
       '(?:set|create|make|add|schedule|put)\\s+(?:me\\s+)?(?:up\\s+)?(?:an?\\s+|the\\s+|my\\s+|another\\s+|new\\s+)?(?:reminder|alarm)s?\\b',
       '(?:new\\s+)?reminder\\b',
       "(?:don'?t|do\\s+not)\\s+let\\s+me\\s+forget\\b",
+      'remember\\s+to\\b',
     ].join('|') +
     ')',
   'i',
@@ -72,9 +74,6 @@ const TIMER_SET = new RegExp(`^${TIMER_VERBS}\\s+(?:me\\s+|us\\s+)?${DETERMINER}
 const TIMER_BARE = new RegExp(`^${DETERMINER}?(?:[\\w.,'-]+[\\s-]+){0,3}?${TIMER_NOUN}s?\\b`, 'i');
 const TIMER_STRIP = new RegExp(`^\\s*(?:${TIMER_VERBS}\\s+(?:me\\s+|us\\s+)?)?${DETERMINER}?`, 'i');
 const NOT_A_REQUEST = /^(?:of|how|what|who|where|why|which|whether|if)\b/i;
-const REPEAT =
-  /\bevery\s+(?:day|morning|evening|night|hour|week|month|weekday|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+\s+(?:minutes?|hours?|days?|weeks?))\b|\b(?:daily|weekly|monthly|hourly|nightly|everyday|recurring|repeating)\b|\beach\s+(?:day|morning|evening|night|week|month)\b/i;
-
 function detectSet(body, now) {
   let kind = null;
   let rest = body;
@@ -90,7 +89,18 @@ function detectSet(body, now) {
     kind = 'timer';
   }
   if (!kind) return null;
-  if (REPEAT.test(rest)) return { type: 'unsupported', reason: 'repeat' };
+
+  const again = repeat.parseRepeat(rest, now);
+  if (again) {
+    if (kind === 'timer') return { type: 'unsupported', reason: 'repeat-timer' };
+    if (!again.rule) return { type: 'bad-time', reason: again.reason, kind, ...tidy(when.cut(rest, again.spans)) };
+    if (again.endCondition) return { type: 'unsupported', reason: 'end' };
+    let { text, connector } = tidy(when.cut(rest, again.spans));
+    if (!text) text = wake ? 'wake up' : alarm ? 'your alarm' : '';
+    const base = { kind, text, connector, repeat: again.rule };
+    if (again.needsTime) return { type: 'ask-when', kind, text, connector, repeat: again.rule, repeatPhrase: again.phrase };
+    return { type: 'set', due: repeat.firstDue(again.rule, now), ...base };
+  }
 
   let found = when.parseWhen(rest, now, { timer: kind === 'timer', part: alarm ? 'morning' : null });
   if (!found && alarm) {
@@ -205,8 +215,24 @@ function detect(text, { now = new Date(), pending = null } = {}) {
   const body = stripEnd(stripPrefix(s));
   if (!body) return null;
 
-  if (pending) {
-    if (pending.text) {
+  // A whole new request ("remind me to … at 6pm", which is what the buttons say) is
+  // never an answer to a question; only a bare time is.
+  const isNewRequest = REMIND_LEAD.test(body) || TIMER_SET.test(body) || TIMER_BARE.test(body);
+  if (pending && !isNewRequest) {
+    const conn = pending.connector ? `${pending.connector} ` : '';
+    if (pending.repeatPhrase) {
+      // "What time?" -> "9am" (or, with no text yet, "take pills at 9am")
+      const reply = body.replace(/^(?:at|around)\s+/i, '');
+      const full = pending.text
+        ? `remind me ${conn}${pending.text} ${pending.repeatPhrase} at ${reply}`
+        : `remind me ${body} ${pending.repeatPhrase}`;
+      const answer = detectSet(full, now);
+      if (answer && (answer.type === 'set' || answer.type === 'bad-time')) return answer;
+    } else if (pending.text && repeat.parseRepeat(body, now)) {
+      // "Make it every day at 9" after a "when?" or a refused time
+      const answer = detectSet(`remind me ${conn}${pending.text} ${body}`, now);
+      if (answer && answer.type !== 'ask-when') return answer;
+    } else if (pending.text) {
       const found = bareTime(body, now);
       if (found) {
         const base = { kind: pending.kind, text: pending.text, connector: pending.connector || '' };
@@ -243,6 +269,14 @@ function detectFromPrompt(text, { now = new Date(), pending = null } = {}) {
 /** The time in a phrase like "in 20 minutes", for the AI's set_reminder tool. */
 function parsePhrase(phrase, { now = new Date(), timer = false } = {}) {
   const t = stripEnd(normalize(phrase));
+  const again = repeat.parseRepeat(t, now);
+  if (again) {
+    if (timer) return { ok: false, reason: 'repeat-timer' };
+    if (!again.rule) return { ok: false, reason: again.reason };
+    if (again.endCondition) return { ok: false, reason: 'end' };
+    if (again.needsTime) return { ok: false, reason: 'needs-time' };
+    return { ok: true, due: repeat.firstDue(again.rule, now), repeat: again.rule, spans: again.spans, how: 'repeat' };
+  }
   const bare = bareTime(t, now);
   if (bare) return bare;
   return when.parseWhen(t, now, { timer, bare: true });
@@ -259,7 +293,9 @@ function sanitize(raw) {
   const text = typeof raw.text === 'string' ? raw.text.replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT) : '';
   const id = typeof raw.id === 'string' && /^[a-z0-9]{4,32}$/i.test(raw.id) ? raw.id : newId();
   const created = Number.isFinite(Number(raw.created)) ? Number(raw.created) : due;
-  return { id, kind: raw.kind === 'timer' ? 'timer' : 'reminder', text, due, created };
+  const kind = raw.kind === 'timer' ? 'timer' : 'reminder';
+  const rule = kind === 'reminder' ? repeat.sanitizeRule(raw.repeat) : null;
+  return { id, kind, text, due, created, ...(rule ? { repeat: rule } : {}) };
 }
 
 class ReminderBook {
@@ -312,9 +348,9 @@ class ReminderBook {
   }
 
   /** Adds one. Returns it, or null when the notebook is full. */
-  add({ kind = 'reminder', text = '', due }) {
+  add({ kind = 'reminder', text = '', due, repeat: rule }) {
     if (this.items.length >= MAX_ACTIVE) return null;
-    const item = sanitize({ kind, text, due, created: this.now() });
+    const item = sanitize({ kind, text, due, created: this.now(), repeat: rule });
     if (!item) return null;
     this.items.push(item);
     this.sort();
@@ -339,13 +375,21 @@ class ReminderBook {
     return gone;
   }
 
-  /** Removes and returns everything that is due by now, oldest first. */
+  /**
+   * Hands over everything that is due by now, oldest first. One-time ones are removed;
+   * repeating ones stay, set for their next time (skipping any that were missed).
+   */
   takeDue(now = this.now()) {
     const due = this.items.filter((i) => i.due <= now);
     if (!due.length) return [];
+    const rung = due.map((item) => ({ ...item }));
+    for (const item of due) {
+      if (item.repeat) item.due = repeat.advance(item.repeat, item.due, new Date(now)).getTime();
+    }
     this.items = this.items.filter((i) => i.due > now);
+    this.sort();
     this.save();
-    return due;
+    return rung;
   }
 }
 
@@ -382,6 +426,7 @@ function confirmText(item, intent, now = new Date()) {
     return `Timer set${tag}: ${dueText}! ⏱️`;
   }
   const what = item.text ? ` ${intent.connector ? `${intent.connector} ${item.text}` : `about “${item.text}”`}` : '';
+  if (item.repeat) return `Okay! I'll remind you${what} ${repeat.describeRule(item.repeat)}. ⏰ The first one is ${dueText}.`;
   return `Okay! I'll remind you${what} ${dueText}. ⏰`;
 }
 
@@ -390,6 +435,8 @@ const BAD_TIME = {
   far: "That's too far away for my little bunny brain! 🐰 I can remember things for about a year.",
   zero: "Hmm, that's right now! 😄 Try something like “in 5 minutes”.",
   baddate: "Hmm, I couldn't find that date on my calendar. 📅",
+  'too-often': "That's a lot of nagging! 😅 I can repeat every 5 minutes at the very most.",
+  'too-far': "That's too far apart for my little bunny brain! 🐰",
 };
 
 const badTimeText = (reason) => BAD_TIME[reason] || BAD_TIME.past;
@@ -405,6 +452,17 @@ function askWhen(intent) {
         action: 'ask',
         arg: `set a timer for ${length}${intent.text ? ` for ${intent.text}` : ''}`,
       })),
+    };
+  }
+  if (intent.repeatPhrase) {
+    if (!intent.text) {
+      return { text: `Sure! What should I remind you about, and at what time? ⏰ Like “take pills at 9am” (${repeat.describeRule(intent.repeat)}).`, actions: [] };
+    }
+    const quoted = `${intent.connector || 'about'} “${shorten(intent.text, 40)}”`;
+    const sentence = `remind me ${intent.connector ? `${intent.connector} ` : ''}${intent.text} ${intent.repeatPhrase}`;
+    return {
+      text: `Sure! What time should I remind you ${quoted} ${repeat.describeRule(intent.repeat)}? ⏰`,
+      actions: [['9 AM', '9am'], ['12 PM', '12pm'], ['6 PM', '6pm'], ['9 PM', '9pm']].map(([label, at]) => ({ label, action: 'ask', arg: `${sentence} at ${at}` })),
     };
   }
   if (!intent.text) {
@@ -430,7 +488,10 @@ function describeList(items, now = Date.now()) {
     };
   }
   const shown = items.slice(0, 6);
-  const lines = shown.map((i) => `${ICON[i.kind]} ${labelOf(i)}: ${when.describeDue(new Date(i.due), new Date(now))}`);
+  const lines = shown.map((i) => {
+    const next = when.describeDue(new Date(i.due), new Date(now));
+    return i.repeat ? `${ICON[i.kind]} ${labelOf(i)}: ${repeat.describeRule(i.repeat)} (next: ${next})` : `${ICON[i.kind]} ${labelOf(i)}: ${next}`;
+  });
   if (items.length > shown.length) lines.push(`…and ${items.length - shown.length} more`);
   const actions = shown.slice(0, 4).map((i) => ({ label: `✖️ ${chipLabel(i)}`, action: 'reminder-cancel', arg: i.id }));
   if (items.length > 1) actions.push({ label: '🧹 Cancel all', action: 'reminder-cancel-all' });

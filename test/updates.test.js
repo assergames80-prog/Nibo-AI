@@ -15,8 +15,8 @@ function release(version, extra = {}) {
     draft: false,
     prerelease: false,
     assets: [
-      { name: `Nibo-AI-Portable-${version}.exe`, browser_download_url: `${DL}/v${version}/Nibo-AI-Portable-${version}.exe` },
-      { name: `Nibo-AI-Setup-${version}.exe`, browser_download_url: `${DL}/v${version}/Nibo-AI-Setup-${version}.exe` },
+      { name: `Nibo-AI-Portable-${version}.exe`, browser_download_url: `${DL}/v${version}/Nibo-AI-Portable-${version}.exe`, size: 2222, digest: `sha256:${'b'.repeat(64)}` },
+      { name: `Nibo-AI-Setup-${version}.exe`, browser_download_url: `${DL}/v${version}/Nibo-AI-Setup-${version}.exe`, size: 1111, digest: `sha256:${'A'.repeat(64)}` },
       { name: `Nibo-AI-Setup-${version}.exe.blockmap`, browser_download_url: `${DL}/v${version}/Nibo-AI-Setup-${version}.exe.blockmap` },
     ],
     ...extra,
@@ -86,8 +86,13 @@ test('picks the installer or the portable file, and never trusts other addresses
     version: '1.5.0',
     url: `https://github.com/${REPO}/releases/tag/v1.5.0`,
     assetUrl: `${DL}/v1.5.0/Nibo-AI-Setup-1.5.0.exe`,
+    size: 1111,
+    sha256: 'a'.repeat(64), // lower-cased
   });
-  assert.equal(updates.parseRelease(release('1.5.0'), { platform: 'win32', portable: true }).assetUrl, `${DL}/v1.5.0/Nibo-AI-Portable-1.5.0.exe`);
+  const portable = updates.parseRelease(release('1.5.0'), { platform: 'win32', portable: true });
+  assert.equal(portable.assetUrl, `${DL}/v1.5.0/Nibo-AI-Portable-1.5.0.exe`);
+  assert.equal(portable.size, 2222);
+  assert.equal(portable.sha256, 'b'.repeat(64));
   // Elsewhere there is no .exe to offer: just the page.
   assert.equal(updates.parseRelease(release('1.5.0'), { platform: 'linux' }).assetUrl, null);
 
@@ -99,6 +104,19 @@ test('picks the installer or the portable file, and never trusts other addresses
   const safe = updates.parseRelease(tricky, { platform: 'win32' });
   assert.equal(safe.url, `https://github.com/${REPO}/releases/tag/v1.5.0`);
   assert.equal(safe.assetUrl, null);
+  assert.equal(safe.sha256, null);
+  // A file without a usable checksum or size can still be downloaded by hand, but not verified.
+  for (const bad of [{ digest: undefined }, { digest: 'md5:abcd' }, { digest: `sha256:${'z'.repeat(64)}` }, { digest: `sha256:${'a'.repeat(63)}` }]) {
+    const odd = release('1.5.0', { assets: [{ name: 'Nibo-AI-Setup-1.5.0.exe', browser_download_url: `${DL}/v1.5.0/Nibo-AI-Setup-1.5.0.exe`, size: 5, ...bad }] });
+    const parsed = updates.parseRelease(odd, { platform: 'win32' });
+    assert.equal(parsed.assetUrl, `${DL}/v1.5.0/Nibo-AI-Setup-1.5.0.exe`);
+    assert.equal(parsed.sha256, null, JSON.stringify(bad));
+    assert.equal(parsed.size, 5);
+  }
+  for (const size of [0, -1, 1.5, '1000', 10 ** 12, null]) {
+    const odd = release('1.5.0', { assets: [{ name: 'Nibo-AI-Setup-1.5.0.exe', browser_download_url: `${DL}/v1.5.0/Nibo-AI-Setup-1.5.0.exe`, size, digest: `sha256:${'a'.repeat(64)}` }] });
+    assert.equal(updates.parseRelease(odd, { platform: 'win32' }).size, null, String(size));
+  }
   // The blockmap is not a download.
   const onlyMap = release('1.5.0', { assets: [{ name: 'Nibo-AI-Setup-1.5.0.exe.blockmap', browser_download_url: `${DL}/v1.5.0/x.blockmap` }] });
   assert.equal(updates.parseRelease(onlyMap, { platform: 'win32' }).assetUrl, null);

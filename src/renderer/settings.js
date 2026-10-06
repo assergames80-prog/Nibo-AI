@@ -67,6 +67,8 @@
     $('voice').checked = s.voice;
     $('boil').checked = s.boil;
     $('check-updates').checked = s.checkUpdates;
+    $('memory-on').checked = s.memoryOn;
+    $('open-memory').textContent = s.memoryCount ? `🧠 What Nibo remembers (${s.memoryCount})…` : '🧠 What Nibo remembers…';
     $('startup-row').hidden = !s.canStartWithSystem;
     $('startup').checked = s.startWithSystem;
     $('version').textContent = `Nibo AI v${s.version}`;
@@ -111,6 +113,7 @@
       autoSearch: $('auto-search').checked,
       bargeIn: $('barge-in').checked,
       checkUpdates: $('check-updates').checked,
+      memoryOn: $('memory-on').checked,
       micSensitivity: $('mic-sensitivity').value,
     };
     if (keyInput.value.trim()) patch.apiKey = keyInput.value.trim();
@@ -123,6 +126,7 @@
     else setStatus('Could not save settings. 😿', 'bad');
   });
 
+  $('open-memory').addEventListener('click', () => api.openMemory());
   $('cancel').addEventListener('click', () => api.close());
 
   document.addEventListener('click', (e) => {

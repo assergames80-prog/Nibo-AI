@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>Nibo AI — What I remember</title>
+    <link rel="stylesheet" href="popup.css" />
+    <link rel="stylesheet" href="memory.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true">
+          <g fill="#bba7f2" stroke="#3b2c5a" stroke-width="2.4" stroke-linejoin="round">
+            <path d="M 20 30 C 14 20, 12 6, 18 3 C 24 0, 28 12, 29 26 Z" />
+            <path d="M 35 26 C 36 12, 42 2, 48 4 C 54 7, 50 20, 44 30 Z" />
+          </g>
+          <path d="M 22 25 C 19 18, 18 10, 20 8 C 23 7, 25 15, 26 24 Z" fill="#ffb3cf" />
+          <path d="M 38 24 C 39 15, 42 9, 45 9 C 47 11, 45 18, 42 25 Z" fill="#ffb3cf" />
+          <path
+            d="M 10 42 C 9 30, 20 23, 32 23 C 45 23, 55 30, 54 42 C 53 53, 44 59, 32 59 C 20 59, 11 53, 10 42 Z"
+            fill="#bba7f2"
+            stroke="#3b2c5a"
+            stroke-width="2.4"
+            stroke-linejoin="round"
+          />
+          <ellipse cx="25" cy="40" rx="3.6" ry="4.4" fill="#2a1f45" />
+          <ellipse cx="39" cy="40" rx="3.6" ry="4.4" fill="#2a1f45" />
+          <circle cx="23.8" cy="38.4" r="1.4" fill="#fff" />
+          <circle cx="37.8" cy="38.4" r="1.4" fill="#fff" />
+          <ellipse cx="19" cy="47" rx="4" ry="2.4" fill="#ff8fb8" opacity="0.6" />
+          <ellipse cx="45" cy="47" rx="4" ry="2.4" fill="#ff8fb8" opacity="0.6" />
+          <path d="M 29 46 Q 32 49 35 46" fill="none" stroke="#3b2c5a" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+        <div>
+          <h1>What I remember 🧠</h1>
+          <p class="sub" id="summary"></p>
+        </div>
+      </header>
+
+      <section>
+        <p class="hint small">
+          These notes stay on this computer. When Nibo asks the AI something, he sends them along so he can answer
+          personally. Delete any you don't want him to keep.
+        </p>
+        <p id="off" class="status bad" hidden>My memory is switched off in Settings, so I'm not using or adding notes.</p>
+        <ul id="notes" aria-live="polite"></ul>
+        <p id="empty" class="empty" hidden>
+          Nothing yet! Tell me something, like “remember that I love cats” or “call me Sam”, or add a note below.
+        </p>
+        <form id="add" autocomplete="off">
+          <input id="note" type="text" maxlength="300" placeholder="Something for Nibo to remember…" aria-label="A new note" />
+          <button id="add-btn" type="submit">Remember 🥕</button>
+        </form>
+        <p id="status" class="status"></p>
+      </section>
+
+      <footer>
+        <button id="clear" type="button" class="secondary danger">Forget everything</button>
+        <div class="buttons">
+          <button id="close" type="button">Close</button>
+        </div>
+      </footer>
+    </main>
+    <script src="memory.js"></script>
+  </body>
+</html>
