@@ -1,7 +1,7 @@
 {
   "name": "nibo-ai",
   "productName": "Nibo AI",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "A cute floating AI bunny assistant for your desktop.",
   "main": "src/main/main.js",
   "author": "Nibo AI contributors",
